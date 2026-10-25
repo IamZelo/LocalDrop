@@ -893,7 +893,12 @@ class PythonWinRTRadio:
 
         try:
             selector = WiFiDirectDevice.get_device_selector(WiFiDirectDeviceSelectorType.ASSOCIATION_ENDPOINT)
-            devices = await DeviceInformation.find_all_async(selector, [IE_PROPERTY])
+            find_all = getattr(
+                DeviceInformation,
+                "find_all_async_aqs_filter_and_additional_properties",
+                DeviceInformation.find_all_async,
+            )
+            devices = await find_all(selector, [IE_PROPERTY])
             found = 0
             for device in devices:
                 self.wifi_scan_devices[device.id] = device
