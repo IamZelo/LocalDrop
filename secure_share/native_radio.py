@@ -92,6 +92,9 @@ class HelperNativeRadio:
     def connect_wifi_direct(self, device_id: str) -> None:
         self.command("connect_wifi_direct", id=device_id)
 
+    def reset_wifi_direct(self) -> None:
+        pass
+
     def prepare_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
         raise RuntimeError("Bluetooth metadata exchange requires the Python WinRT backend")
 

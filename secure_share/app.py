@@ -282,10 +282,6 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.status.setText("Connecting to the nearby device...")
 
-        # Start Wi-Fi Direct scanning immediately in parallel with Bluetooth bootstrap
-        self.scan_timer.start()
-        self.scan_radios()
-
         # Connect immediately if a matching Wi-Fi Direct peer was already discovered
         for radio_id, radio_peer in list(self.radio_peers.items()):
             self._connect_matching_wifi_peer(radio_id, radio_peer)
@@ -293,6 +289,9 @@ class MainWindow(QMainWindow):
                 break
 
         if not self.pending_radio_id:
+            # Start Wi-Fi Direct scanning in parallel with Bluetooth bootstrap
+            self.scan_timer.start()
+            self.scan_radios()
             try:
                 peer = self.ble_peers[ble_token]
                 self.radio.prepare_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
@@ -361,6 +360,8 @@ class MainWindow(QMainWindow):
 
     def scan_radios(self) -> None:
         if self.scan_pending or not self.radio.supported:
+            return
+        if self.workflow_active and self.pending_radio_id:
             return
         self.scan_pending = True
         try:
@@ -630,7 +631,13 @@ class MainWindow(QMainWindow):
         self.pending_radio_id = None
         self.pending_peer = None
         self.devices.setEnabled(True)
+        if hasattr(self.radio, "reset_wifi_direct"):
+            try:
+                self.radio.reset_wifi_direct()
+            except Exception as exc:
+                logger.warning("Error resetting Wi-Fi Direct on radio: %s", exc)
         self.refresh_nearby_devices()
+        QTimer.singleShot(2000, self.scan_timer.start)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.scan_timer.stop()

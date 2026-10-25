@@ -142,6 +142,7 @@ class PythonWinRTRadio:
         self.wifi_scan_matches: set[str] = set()
         self.connections: dict[str, object] = {}
         self.event_tokens: list[tuple[object, str, object]] = []
+        self._wifi_direct_in_progress = False
         self.token = hashlib.sha256(device_id.encode() + os.urandom(32)).digest()[:8]
 
     @property
@@ -950,6 +951,8 @@ class PythonWinRTRadio:
     def scan_wifi_direct(self) -> None:
         if not self.started:
             raise RuntimeError("Wi-Fi Direct is locked until Bluetooth bootstrap metadata is exchanged")
+        if self._wifi_direct_in_progress:
+            return
         if self.wifi_publisher is None:
             self._start_wifi_direct()
         self._schedule(self._scan_wifi_direct())
@@ -957,6 +960,9 @@ class PythonWinRTRadio:
     async def _scan_wifi_direct(self) -> None:
         from winrt.windows.devices.enumeration import DeviceInformation
         from winrt.windows.devices.wifidirect import WiFiDirectDevice, WiFiDirectDeviceSelectorType
+
+        if self._wifi_direct_in_progress:
+            return
 
         try:
             selector = WiFiDirectDevice.get_device_selector(WiFiDirectDeviceSelectorType.ASSOCIATION_ENDPOINT)
@@ -1013,8 +1019,11 @@ class PythonWinRTRadio:
             else:
                 logger.debug("Wi-Fi Direct endpoint %s did not contain the app information element", device.id)
                 return False
-        except Exception:
-            logger.exception("Could not inspect Wi-Fi Direct endpoint %s", getattr(device, "id", "unknown"))
+        except OSError as exc:
+            logger.debug("Wi-Fi Direct endpoint %s has no readable information elements: %s", getattr(device, "id", "unknown"), exc)
+            return False
+        except Exception as exc:
+            logger.warning("Could not inspect Wi-Fi Direct endpoint %s: %s", getattr(device, "id", "unknown"), exc)
             return False
 
     def connect_wifi_direct(self, device_id: str) -> None:
@@ -1026,8 +1035,12 @@ class PythonWinRTRadio:
 
     async def _connect_wifi_direct(self, device_id: str) -> None:
         from winrt.windows.devices.enumeration import DeviceInformation
-        from winrt.windows.devices.wifidirect import WiFiDirectDevice
+        from winrt.windows.devices.wifidirect import (
+            WiFiDirectAdvertisementPublisherStatus,
+            WiFiDirectDevice,
+        )
 
+        self._wifi_direct_in_progress = True
         publisher_stopped = False
         try:
             if self.wifi_watcher is not None:
@@ -1038,9 +1051,10 @@ class PythonWinRTRadio:
 
             if self.wifi_publisher is not None:
                 try:
-                    logger.info("Stopping Wi-Fi Direct publisher to connect as client")
-                    self.wifi_publisher.stop()
-                    publisher_stopped = True
+                    if self.wifi_publisher.status == WiFiDirectAdvertisementPublisherStatus.STARTED:
+                        logger.info("Stopping Wi-Fi Direct publisher to connect as client")
+                        self.wifi_publisher.stop()
+                        publisher_stopped = True
                 except Exception as exc:
                     logger.warning("Could not stop Wi-Fi Direct publisher: %s", exc)
 
@@ -1074,6 +1088,34 @@ class PythonWinRTRadio:
             event = _exception_event("wifi_direct_error", exc)
             event["phase"] = "wifi_direct_connect"
             self.on_event(event)
+        finally:
+            self._wifi_direct_in_progress = False
+
+    def reset_wifi_direct(self) -> None:
+        """Close active Wi-Fi Direct connections and restore the autonomous GO publisher."""
+        if not self.started:
+            return
+        self._schedule(self._reset_wifi_direct())
+
+    async def _reset_wifi_direct(self) -> None:
+        from winrt.windows.devices.wifidirect import WiFiDirectAdvertisementPublisherStatus
+
+        logger.info("Resetting Wi-Fi Direct state after transfer")
+        for device_id, device in list(self.connections.items()):
+            try:
+                logger.info("Closing Wi-Fi Direct connection %s", device_id)
+                device.close()
+            except Exception as exc:
+                logger.warning("Error closing Wi-Fi Direct device %s: %s", device_id, exc)
+        self.connections.clear()
+
+        if self.wifi_publisher is not None:
+            try:
+                if self.wifi_publisher.status != WiFiDirectAdvertisementPublisherStatus.STARTED:
+                    logger.info("Restarting Wi-Fi Direct publisher")
+                    self.wifi_publisher.start()
+            except Exception as exc:
+                logger.warning("Error restarting Wi-Fi Direct publisher: %s", exc)
 
     def _track_connection(self, device, name: str) -> None:
         logger.info("Wi-Fi Direct connected to %s (%s)", name, device.device_id)
@@ -1085,12 +1127,18 @@ class PythonWinRTRadio:
             self.on_event(
                 {"event": "wifi_direct_connection_status", "id": sender.device_id, "status": status_name}
             )
-            if status_name == "DISCONNECTED" and self.wifi_publisher is not None:
+            if status_name == "DISCONNECTED":
                 try:
-                    logger.info("Restarting Wi-Fi Direct publisher after disconnect")
-                    self.wifi_publisher.start()
-                except Exception as exc:
-                    logger.warning("Could not restart Wi-Fi Direct publisher: %s", exc)
+                    sender.close()
+                except Exception:
+                    pass
+                self.connections.pop(sender.device_id, None)
+                if self.wifi_publisher is not None:
+                    try:
+                        logger.info("Restarting Wi-Fi Direct publisher after disconnect")
+                        self.wifi_publisher.start()
+                    except Exception as exc:
+                        logger.warning("Could not restart Wi-Fi Direct publisher: %s", exc)
 
         token = device.add_connection_status_changed(on_status_changed)
         self._remember_event(device, "connection_status_changed", token)
