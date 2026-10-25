@@ -329,6 +329,7 @@ class MainWindow(QMainWindow):
                 self.set_busy(True)
                 self.progress.setRange(0, 0)
                 self.status.setText(f"Connecting incoming sender {event.get('name')}...")
+                logger.info("Accepted incoming Wi-Fi Direct request from %s; waiting for Windows endpoint", event.get("name"))
             event["_decision"].set()
         elif kind == "wifi_direct_connected":
             self.handle_wifi_connected(event)

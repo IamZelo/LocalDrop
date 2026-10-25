@@ -332,7 +332,9 @@ class PythonWinRTRadio:
             # An incoming request is already an OS-approved invitation. Do
             # not start the PushButton pairing ceremony here; on some Windows
             # 11 adapters it blocks for 30 seconds and returns FAILED.
-            device = await WiFiDirectDevice.from_id_async(information.id)
+            device = await asyncio.wait_for(
+                WiFiDirectDevice.from_id_async(information.id), 15
+            )
             if device is None:
                 from winrt.windows.devices.wifidirect import (
                     WiFiDirectConfigurationMethod,
@@ -346,10 +348,14 @@ class PythonWinRTRadio:
                 parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
                 parameters.group_owner_intent = 15
                 logger.info("Direct accept returned None; retrying with connection parameters")
-                device = await WiFiDirectDevice.from_id_async(information.id, parameters)
+                device = await asyncio.wait_for(
+                    WiFiDirectDevice.from_id_async(information.id, parameters), 15
+                )
             if device is None:
                 await asyncio.sleep(1.0)
-                device = await WiFiDirectDevice.from_id_async(information.id)
+                device = await asyncio.wait_for(
+                    WiFiDirectDevice.from_id_async(information.id), 15
+                )
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_accept", "Windows returned no Wi-Fi Direct device for the accepted request"
