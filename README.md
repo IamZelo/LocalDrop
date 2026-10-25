@@ -1,56 +1,10 @@
 # Local Secure Share
 
-A backendless desktop file-sharing application for Windows, macOS, and Linux. It discovers nearby devices and transfers files over the local network or a manually created hotspot. It does not use cloud storage, accounts, telemetry, STUN, TURN, or any internet API.
+A local file-sharing application focused on Windows 11. Discovery and connection setup use Wi-Fi Direct through in-process Python WinRT. Bluetooth is not used or required. There is no internet relay, cloud service, or account server.
 
-## Current implementation
+## Setup on both computers
 
-- PySide6 drag-and-drop desktop interface
-- mDNS discovery on the local link
-- TLS 1.3 transport
-- Ed25519 device identities and certificate pinning
-- Signed first-transfer trust with certificate pinning
-- One incoming-transfer approval, saved directly to Downloads
-- Streaming transfers with SHA-256 verification and bounded memory use
-- Encrypted local trusted-device and recent-transfer data
-- Direct-address and one-hop restrictions that prevent routed internet transfers
-
-Native Wi-Fi Direct group creation is handled in-process on Windows after Bluetooth bootstrap. Linux and Apple require different native adapters; until those are added, their fallback remains an existing LAN or manually created hotspot.
-
-## Native Bluetooth and Wi-Fi Direct on Windows
-
-The Windows 11 build uses PyWinRT directly inside the Python process to:
-
-- advertise a connectable Bluetooth LE GATT service containing the hostname in its discovery payload;
-- resolve advertisements to canonical Windows Bluetooth association endpoints, including their public/random address type;
-- exchange non-sensitive Wi-Fi bootstrap metadata over Bluetooth GATT without creating a Windows Bluetooth bond;
-- start and scan for Windows Wi-Fi Direct endpoints only after that metadata exchange;
-- creates or accepts a Wi-Fi Direct link; and
-- reports the new local endpoint to the Python application, which restarts mDNS discovery on that link.
-
-Install the Python dependencies on each computer before starting the application:
-
-```powershell
-python -m pip install -r requirements.txt
-python main.py
-```
-
-The UI presents one Bluetooth-derived nearby-device list. Drop files and select a computer; the Wi-Fi Direct transport is created automatically. The receiver sees one file offer with filenames and sizes. Accepting it stores the sender identity and saves the verified files to Downloads. No Windows Bluetooth pairing is required.
-
-Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. The GATT bootstrap response supplies the local transfer port, rotating Wi-Fi correlation token, app identity, and public key needed to locate and authenticate the peer. It never contains file names, file contents, credentials, or private keys.
-
-The runtime uses one radio path: in-process Python WinRT. The older source under `native/windows` is retained for reference but is not selected as a fallback.
-
-For detailed console diagnostics on either laptop, run:
-
-```powershell
-python -m secure_share.diagnostics
-```
-
-This prints the selected radio backend, missing Python modules, Bluetooth status, Wi-Fi Direct status, scan results, native exceptions, and any legacy-helper exit code.
-
-## Run
-
-Use Python 3.12 or newer:
+Use Python 3.12 or newer and install the same application version on both PCs:
 
 ```powershell
 python -m venv .venv
@@ -59,21 +13,43 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-On macOS/Linux, activate with `source .venv/bin/activate` instead.
+Keep Wi-Fi enabled and the application open on both computers. The Wi-Fi adapter and its driver must support Windows Wi-Fi Direct; installed Python packages alone do not establish hardware support. Other operating systems do not currently have a radio backend. There is no automatic LAN or hotspot fallback.
 
-Allow the application through the local firewall when prompted. On Windows with the WinRT packages installed, the normal flow is:
+Allow this Python executable's inbound connections in Windows Firewall on the network profile used by the Wi-Fi Direct interface. The application logs its actual listening port at startup. Do not disable the firewall. Windows Mobile Hotspot can interfere with Wi-Fi Direct; turn it off when diagnosing connection failures.
 
-1. Drop or add one or more files.
-2. Click one device in the single **Nearby devices** list. Only devices whose rotating token was observed over Bluetooth are enabled.
-3. Windows creates the Wi-Fi Direct link without an application prompt.
-4. The receiver sees the signed filenames and sizes and chooses **Accept** or **Deny**.
-5. File bytes are streamed only after acceptance and saved to Downloads.
+## Transfer flow
 
-An existing LAN/hotspot remains available as the local transport fallback.
+1. Drop or add files.
+2. Select a computer in the Wi-Fi Direct device list. Entries are grouped by application identity, not hostname.
+3. Windows negotiates a direct Wi-Fi link. The status line shows connection setup, file-server connection, and encryption setup separately.
+4. The receiver sees filenames and sizes and chooses **Accept** or **Deny**. The sender allows five minutes for approval.
+5. Accepted files stream over TLS 1.3 into Downloads, with SHA-256 verification. Existing files are given unique destination names.
 
-## Security notes
+Wi-Fi Direct advertisements carry the current file-server port, rotating session token, application identity, and public key. They contain no files or private keys. Incomplete advertisements are ignored; the application never guesses a fallback port. The outgoing socket binds to the local address supplied by the Wi-Fi Direct connection.
 
-- Approve a first transfer only when you recognize the nearby computer and expected files.
-- A trusted identity change is rejected; use **Forget** before intentionally trusting a reinstalled device.
-- If an OS credential store is unavailable, the app warns that its secrets are protected only by local file permissions.
-- Incomplete files use a `.part` suffix and are deleted after a failed integrity check.
+Only the selected outgoing transfer can start sending. Incoming links and duplicate or expired connection events cannot send staged files. The application limits connection negotiation to 90 seconds, TCP/TLS operations to 20 seconds, and file-stream inactivity to 60 seconds. Native radio failures and network failures include phase and endpoint details in the console.
+
+## Diagnostics and validation
+
+```powershell
+python -m secure_share.diagnostics
+python -m unittest discover -s tests -v
+```
+
+The diagnostic command reports package availability, publisher status, nearby endpoints, and native errors. Keep both consoles when reproducing a failure. The tests cover protocol validation and application control flow with GUI, cryptography, and native boundaries mocked where needed; they do not prove a physical Wi-Fi Direct connection works.
+
+Hardware acceptance checklist:
+
+- Run with Bluetooth disabled on both PCs; discover each other by hostname.
+- Transfer a small file and a large file in each direction; compare hashes.
+- Wait over 20 seconds before accepting; verify success and the Downloads destination.
+- Deny a transfer; verify no file is written.
+- Retry after a failed connection and after completing a transfer.
+- Stage files on the receiver; accepting an incoming transfer must not send them back.
+- Interrupt Wi-Fi or deny firewall access; verify a bounded failure with an actionable status and console traceback.
+
+## Security boundaries
+
+Transfers use TLS 1.3 with the discovered public key pinned to the server certificate, and signed file offers. Previously trusted key changes and blocked devices are rejected. First-contact discovery is not independently authenticated: accepting a familiar hostname alone does not establish the owner's identity against an active attacker. This retains trust-on-first-use without an additional code prompt.
+
+Incomplete files use a `.part` suffix and are removed on transfer failure. Device identities and history stay local; an OS-keychain fallback warning appears if secrets must be stored using local file permissions. No Bluetooth pairing, Bluetooth packages, legacy radio helper, or mDNS discovery is used by the application.
