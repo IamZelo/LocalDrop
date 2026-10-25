@@ -985,10 +985,6 @@ class PythonWinRTRadio:
             WiFiDirectDevice,
         )
 
-        if self._wifi_direct_in_progress:
-            logger.info("Wi-Fi Direct connection already in progress, skipping duplicate request for %s", device_id)
-            return
-
         self._wifi_direct_in_progress = True
         publisher_stopped = False
         try:
@@ -1004,7 +1000,6 @@ class PythonWinRTRadio:
                         logger.info("Stopping Wi-Fi Direct publisher to connect as client")
                         self.wifi_publisher.stop()
                         publisher_stopped = True
-                        await asyncio.sleep(0.5)
                 except Exception as exc:
                     logger.warning("Could not stop Wi-Fi Direct publisher: %s", exc)
 
@@ -1021,11 +1016,7 @@ class PythonWinRTRadio:
             logger.info("Attempting direct FromIdAsync to %s", information.id)
             device = await WiFiDirectDevice.from_id_async(information.id)
             if device is None:
-                logger.info("Direct FromIdAsync returned None; retrying in 1s")
-                await asyncio.sleep(1.0)
-                device = await WiFiDirectDevice.from_id_async(information.id)
-            if device is None:
-                logger.info("Direct FromIdAsync retry returned None; trying with connection parameters")
+                logger.info("Direct FromIdAsync returned None; trying with connection parameters")
                 parameters = self._wifi_connection_parameters(is_go_intent=False)
                 device = await WiFiDirectDevice.from_id_async(information.id, parameters)
             if device is None:
