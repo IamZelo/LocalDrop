@@ -113,6 +113,13 @@ class NetworkManager:
             if raw_key != unb64(expected_public_key):
                 wrapped.close()
                 raise NetworkError("The remote device identity changed. Forget and pair it again if intentional.")
+        else:
+            try:
+                cert = x509.load_der_x509_certificate(wrapped.getpeercert(binary_form=True))
+                raw_key = cert.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+                self.store.trust_peer(peer.device_id, peer.display_name, b64(raw_key))
+            except Exception:
+                pass
         return wrapped
 
     def _accept_loop(self) -> None:
@@ -233,16 +240,12 @@ class NetworkManager:
         self.callbacks.paired()
 
     def send_files(self, peer: DiscoveredPeer, paths: list[Path]) -> None:
-        trusted = self.store.peer(peer.device_id)
-        if not trusted:
-            self.callbacks.status("Pair with this device before sending files")
-            return
-
         def work():
             transfer_id = uuid.uuid4().hex
             succeeded = False
             sock = None
             try:
+                trusted = self.store.peer(peer.device_id)
                 self.callbacks.status("Preparing file manifest...")
                 files = [{"name": p.name, "size": p.stat().st_size, "sha256": hash_file(p)} for p in paths]
                 offer = {
@@ -250,7 +253,9 @@ class NetworkManager:
                     "sender": _identity_payload(self.identity), "files": files, "time": int(time.time()),
                 }
                 offer["signature"] = self.identity.sign(canonical(offer))
-                sock = self._connect(peer, trusted["public_key"])
+                sock = self._connect(peer, trusted["public_key"] if trusted else None)
+                if not trusted:
+                    trusted = self.store.peer(peer.device_id)
                 send_control(sock, offer)
                 _, decision = recv_frame(sock)
                 if not decision.get("accepted"):
@@ -270,7 +275,8 @@ class NetworkManager:
                 if result.get("status") != "complete":
                     raise NetworkError(result.get("reason", "Receiver could not verify the files"))
                 self.store.record_transfer(transfer_id, peer.device_id, "sent", {"files": files}, "complete")
-                self.callbacks.status(f"Sent {len(files)} file(s) to {trusted['name']}")
+                recipient_name = trusted["name"] if trusted else peer.display_name
+                self.callbacks.status(f"Sent {len(files)} file(s) to {recipient_name}")
                 self.callbacks.progress(transfer_id, 100)
                 succeeded = True
             except Exception as exc:

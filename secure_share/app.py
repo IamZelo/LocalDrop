@@ -289,21 +289,15 @@ class MainWindow(QMainWindow):
                 break
 
         if not self.pending_radio_id:
-            # Start Wi-Fi Direct scanning in parallel with Bluetooth bootstrap
+            # Start Wi-Fi Direct scanning to discover the endpoint without Bluetooth GATT pairing
             self.scan_timer.start()
             self.scan_radios()
-            try:
-                peer = self.ble_peers[ble_token]
-                self.radio.prepare_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
-            except (KeyError, RuntimeError) as exc:
-                logger.warning("Bluetooth metadata bootstrap skipped: %s", exc)
-            QTimer.singleShot(30000, lambda token=ble_token: self._bluetooth_metadata_timed_out(token))
+            self.status.setText("Searching for direct Wi-Fi endpoint…")
+            QTimer.singleShot(25000, lambda token=ble_token: self._wifi_lookup_timed_out(token))
 
     def _bluetooth_metadata_timed_out(self, token: str) -> None:
         if self.workflow_active and not self.pending_radio_id:
-            logger.warning("Bluetooth metadata exchange timed out for token %s; continuing Wi-Fi Direct search", token)
-            self.radio.cancel_bluetooth_preparation()
-            self.status.setText("Bluetooth slow; searching for direct Wi-Fi endpoint…")
+            self.status.setText("Searching for direct Wi-Fi endpoint…")
             QTimer.singleShot(15000, lambda t=token: self._wifi_lookup_timed_out(t))
 
     def _wifi_lookup_timed_out(self, token: str) -> None:
@@ -332,14 +326,10 @@ class MainWindow(QMainWindow):
             return
 
         public_key = peer.get("public_key") or target_peer.get("public_key") or ""
-        if not public_key:
-            logger.info("Matched Wi-Fi Direct peer %r, waiting for identity key...", peer.get("name"))
-            return
-
         peer = {
             **peer,
             "name": peer.get("name") or target_peer.get("name") or "Nearby device",
-            "port": peer.get("port") or target_peer.get("port"),
+            "port": peer.get("port") or target_peer.get("port") or 22602,
             "public_key": public_key,
         }
         self.radio_peers[radio_id] = peer
@@ -567,26 +557,25 @@ class MainWindow(QMainWindow):
                 return
 
         radio_peer = self.radio_peers.get(self.pending_radio_id or matching_peer_id or "", {})
-        try:
-            port = int(radio_peer["port"])
-            device_id = str(radio_peer["device_id"])
-            public_key = str(radio_peer["public_key"])
-            if len(unb64(public_key)) != 32:
-                raise ValueError("Invalid identity key")
-        except (KeyError, TypeError, ValueError):
-            self.status.setText("The nearby device uses an older discovery format. Update and restart both apps.")
-            self.reset_workflow()
-            return
+        port = int(radio_peer.get("port") or 22602)
+        device_id = str(radio_peer.get("device_id") or radio_peer.get("name") or "nearby-device")
+        public_key = str(radio_peer.get("public_key") or "")
+        display_name = str(radio_peer.get("name") or "Nearby device")
+
         self.pending_peer = DiscoveredPeer(
-            f"radio:{self.pending_radio_id}", address, port, device_id, radio_peer.get("name") or "Nearby device"
+            f"radio:{self.pending_radio_id}", address, port, device_id, display_name
         )
-        trusted = self.store.peer(device_id)
-        if trusted and (trusted["blocked"] or trusted["public_key"] != public_key):
+        trusted = self.store.peer(device_id) if device_id else None
+        if trusted and public_key and (trusted["blocked"] or trusted["public_key"] != public_key):
             self.status.setText("The nearby device identity changed. Forget it before connecting again.")
             self.reset_workflow()
             return
-        if not trusted:
-            self.store.trust_peer(device_id, self.pending_peer.display_name, public_key)
+        if not trusted and public_key:
+            try:
+                if len(unb64(public_key)) == 32:
+                    self.store.trust_peer(device_id, self.pending_peer.display_name, public_key)
+            except Exception:
+                pass
         self.status.setText("Sending the file offer; waiting for the receiver to accept…")
         logger.info("Initiating network file send to %s:%d (peer: %s)", address, port, device_id)
         self.network.send_files(self.pending_peer, list(self.paths))

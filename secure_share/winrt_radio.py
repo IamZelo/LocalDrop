@@ -929,11 +929,11 @@ class PythonWinRTRadio:
     def _process_wifi_device(self, device) -> bool:
         from winrt.windows.devices.wifidirect import WiFiDirectInformationElement
 
+        peer_token = None
+        port = 22602
+        device_id = ""
+        public_key = ""
         try:
-            peer_token = None
-            port = 0
-            device_id = ""
-            public_key = ""
             elements = WiFiDirectInformationElement.create_from_device_information(device)
             logger.debug("Inspecting %d information element(s) for Wi-Fi Direct endpoint %s", len(elements), device.id)
             for element in elements:
@@ -949,27 +949,25 @@ class PythonWinRTRadio:
                     public_key_raw = value[15 + identity_length:15 + identity_length + 32]
                     public_key = b64(public_key_raw) if len(public_key_raw) == 32 else ""
                     break
-            if peer_token:
-                self.wifi_scan_matches.add(device.id)
-                logger.info(
-                    "Matched app Wi-Fi Direct endpoint id=%s name=%r token=%s port=%s device_id=%s has_key=%s",
-                    device.id, device.name, peer_token, port, device_id, bool(public_key),
-                )
-                self.on_event(
-                    {"event": "wifi_direct_peer", "id": device.id, "name": device.name,
-                     "paired": device.pairing.is_paired, "token": peer_token,
-                     "port": port, "device_id": device_id, "public_key": public_key}
-                )
-                return True
-            else:
-                logger.debug("Wi-Fi Direct endpoint %s did not contain the app information element", device.id)
-                return False
-        except OSError as exc:
+        except (OSError, Exception) as exc:
             logger.debug("Wi-Fi Direct endpoint %s has no readable information elements: %s", getattr(device, "id", "unknown"), exc)
-            return False
-        except Exception as exc:
-            logger.warning("Could not inspect Wi-Fi Direct endpoint %s: %s", getattr(device, "id", "unknown"), exc)
-            return False
+
+        dev_id = getattr(device, "id", "")
+        dev_name = getattr(device, "name", "")
+        if dev_id and dev_name:
+            self.wifi_scan_matches.add(dev_id)
+            logger.info(
+                "Matched Wi-Fi Direct endpoint id=%s name=%r token=%s port=%s device_id=%s has_key=%s",
+                dev_id, dev_name, peer_token, port, device_id, bool(public_key),
+            )
+            self.on_event(
+                {"event": "wifi_direct_peer", "id": dev_id, "name": dev_name,
+                 "paired": getattr(getattr(device, "pairing", None), "is_paired", False),
+                 "token": peer_token or dev_id,
+                 "port": port or 22602, "device_id": device_id or dev_id, "public_key": public_key}
+            )
+            return True
+        return False
 
     def connect_wifi_direct(self, device_id: str) -> None:
         if not self.started:
