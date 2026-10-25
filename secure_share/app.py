@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
         peer = {
             **peer,
             "name": peer.get("name") or target_peer.get("name") or "Nearby device",
-            "port": peer.get("port") or target_peer.get("port") or 22602,
+            "port": peer.get("port") or target_peer.get("port"),
             "public_key": public_key,
         }
         self.radio_peers[radio_id] = peer
@@ -557,10 +557,24 @@ class MainWindow(QMainWindow):
                 return
 
         radio_peer = self.radio_peers.get(self.pending_radio_id or matching_peer_id or "", {})
-        port = int(radio_peer.get("port") or 22602)
+        port = int(radio_peer.get("port") or 0)
         device_id = str(radio_peer.get("device_id") or radio_peer.get("name") or "nearby-device")
         public_key = str(radio_peer.get("public_key") or "")
         display_name = str(radio_peer.get("name") or "Nearby device")
+
+        if not port or not public_key:
+            target_name = str(event.get("name") or "").strip().casefold()
+            for p in self.radio_peers.values():
+                if str(p.get("name") or "").strip().casefold() == target_name:
+                    port = int(p.get("port") or port)
+                    device_id = str(p.get("device_id") or device_id)
+                    public_key = str(p.get("public_key") or public_key)
+                    display_name = str(p.get("name") or display_name)
+                    if port and public_key:
+                        break
+
+        if not port:
+            port = 22602
 
         self.pending_peer = DiscoveredPeer(
             f"radio:{self.pending_radio_id}", address, port, device_id, display_name
