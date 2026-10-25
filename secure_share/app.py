@@ -351,7 +351,7 @@ class MainWindow(QMainWindow):
     def scan_radios(self) -> None:
         if self.scan_pending or not self.radio.supported:
             return
-        if self.workflow_active and self.pending_radio_id:
+        if self.workflow_active:
             return
         self.scan_pending = True
         try:
@@ -456,6 +456,7 @@ class MainWindow(QMainWindow):
             # the receiver's single user-facing Accept/Decline decision.
             self.scan_timer.stop()
             self.scan_pending = False
+            self.workflow_active = True
             event["accepted"] = True
             event["_decision"].set()
             self.status.setText("Nearby sender found. Preparing the secure file offer…")
