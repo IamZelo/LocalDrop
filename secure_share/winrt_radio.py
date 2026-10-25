@@ -483,10 +483,23 @@ class PythonWinRTRadio:
                 device_id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
             parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=False)
-            device = await WiFiDirectDevice.from_id_async(information.id, parameters)
+            # A previously paired Windows endpoint already has its negotiation
+            # profile. Starting another PushButton ceremony first can make
+            # FromIdAsync return None on some Windows 11 adapters. Try the
+            # direct endpoint before applying explicit parameters.
+            logger.info("Opening Wi-Fi Direct endpoint directly before pairing parameters")
+            device = await WiFiDirectDevice.from_id_async(information.id)
             if device is None:
-                logger.warning("FromIdAsync with PushButton parameters returned None; trying without parameters")
-                device = await WiFiDirectDevice.from_id_async(information.id)
+                logger.warning("Direct FromIdAsync returned None; retrying with PushButton parameters")
+                device = await WiFiDirectDevice.from_id_async(information.id, parameters)
+            if device is None:
+                await asyncio.sleep(1.0)
+                refreshed = await DeviceInformation.create_from_id_async(information.id)
+                if refreshed is not None:
+                    logger.info("Retrying Wi-Fi Direct endpoint after fresh DeviceInformation lookup")
+                    device = await WiFiDirectDevice.from_id_async(refreshed.id)
+                    if device is None:
+                        device = await WiFiDirectDevice.from_id_async(refreshed.id, parameters)
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_connect", "Windows returned no Wi-Fi Direct device for the selected endpoint"
