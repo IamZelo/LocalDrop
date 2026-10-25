@@ -848,12 +848,59 @@ class PythonWinRTRadio:
         logger.info("Incoming Wi-Fi Direct request accepted by the user")
         await self._accept_request(request)
 
-    @staticmethod
-    def _wifi_connection_parameters():
-        from winrt.windows.devices.wifidirect import WiFiDirectConfigurationMethod, WiFiDirectConnectionParameters
+    async def _pair_for_wifi_direct(self, information, is_go_intent: bool = False):
+        from winrt.windows.devices.enumeration import (
+            DevicePairingKinds,
+            DevicePairingProtectionLevel,
+        )
+        from winrt.windows.devices.wifidirect import (
+            WiFiDirectConfigurationMethod,
+            WiFiDirectConnectionParameters,
+        )
 
         parameters = WiFiDirectConnectionParameters()
         parameters.preference_ordered_configuration_methods.append(WiFiDirectConfigurationMethod.PUSH_BUTTON)
+        parameters.group_owner_intent = 15 if is_go_intent else 0
+
+        pairing = getattr(information, "pairing", None)
+        if pairing is None:
+            return parameters
+
+        if pairing.is_paired:
+            logger.info("Wi-Fi Direct endpoint is already paired; continuing to FromIdAsync")
+            return parameters
+
+        if not pairing.can_pair:
+            logger.warning("Wi-Fi Direct endpoint reports can_pair=False; continuing to FromIdAsync")
+            return parameters
+
+        kinds = WiFiDirectConnectionParameters.get_device_pairing_kinds(WiFiDirectConfigurationMethod.PUSH_BUTTON)
+        custom = pairing.custom
+
+        def pairing_requested(_sender, args) -> None:
+            kind_name = _enum_name(args.pairing_kind)
+            logger.info("Wi-Fi Direct pairing ceremony requested: %s", kind_name)
+            self.on_event({"event": "wifi_direct_pairing_ceremony", "kind": kind_name})
+            if args.pairing_kind == DevicePairingKinds.CONFIRM_ONLY:
+                args.accept()
+
+        event_token = custom.add_pairing_requested(pairing_requested)
+        try:
+            logger.info("Calling custom pair_with_protection_level_and_settings_async for Wi-Fi Direct")
+            result = await custom.pair_with_protection_level_and_settings_async(
+                kinds, DevicePairingProtectionLevel.DEFAULT, parameters
+            )
+            status_name = _enum_name(result.status)
+            logger.info("Wi-Fi Direct pairing completed with status=%s", status_name)
+            if status_name not in ("PAIRED", "ALREADY_PAIRED"):
+                self.on_event({"event": "wifi_direct_pairing_warning", "status": status_name})
+        except Exception as exc:
+            logger.warning("Wi-Fi Direct custom pairing exception: %s; continuing to FromIdAsync", exc)
+        finally:
+            try:
+                custom.remove_pairing_requested(event_token)
+            except Exception:
+                pass
         return parameters
 
     async def _accept_request(self, request) -> None:
@@ -861,17 +908,19 @@ class PythonWinRTRadio:
 
         try:
             information = request.device_information
-            parameters = self._wifi_connection_parameters()
             logger.info(
-                "Accepting Wi-Fi Direct endpoint with FromIdAsync id=%s name=%r",
-                information.id, information.name,
+                "Accepting Wi-Fi Direct endpoint id=%s name=%r paired=%s can_pair=%s",
+                information.id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
-            device = await WiFiDirectDevice.from_id_async(request.device_information.id, parameters)
+            parameters = await self._pair_for_wifi_direct(information, is_go_intent=True)
+            device = await WiFiDirectDevice.from_id_async(information.id, parameters)
+            if device is None:
+                device = await WiFiDirectDevice.from_id_async(information.id)
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_accept", "Windows returned no Wi-Fi Direct device for the accepted request"
                 )
-            self._track_connection(device, request.device_information.name)
+            self._track_connection(device, information.name)
         except Exception as exc:
             logger.exception("Incoming Wi-Fi Direct request failed")
             event = _exception_event("wifi_direct_error", exc)
@@ -973,11 +1022,14 @@ class PythonWinRTRadio:
                     "wifi_direct_connect", "The selected Wi-Fi Direct endpoint disappeared before connection"
                 )
             logger.info(
-                "Starting Wi-Fi Direct FromIdAsync id=%s name=%r paired=%s can_pair=%s",
+                "Starting Wi-Fi Direct connection id=%s name=%r paired=%s can_pair=%s",
                 device_id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
-            parameters = self._wifi_connection_parameters()
+            parameters = await self._pair_for_wifi_direct(information, is_go_intent=False)
             device = await WiFiDirectDevice.from_id_async(device_id, parameters)
+            if device is None:
+                logger.warning("FromIdAsync with PushButton parameters returned None; trying without parameters")
+                device = await WiFiDirectDevice.from_id_async(device_id)
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_connect", "Windows returned no Wi-Fi Direct device for the selected endpoint"
