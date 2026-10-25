@@ -332,9 +332,34 @@ class PythonWinRTRadio:
             # An incoming request is already an OS-approved invitation. Do
             # not start the PushButton pairing ceremony here; on some Windows
             # 11 adapters it blocks for 30 seconds and returns FAILED.
-            device = await asyncio.wait_for(
-                WiFiDirectDevice.from_id_async(information.id), 15
-            )
+            # Some Windows 11 / adapter combinations expose the request as a
+            # temporary ``..._PendingRequest`` device id.  FromIdAsync can
+            # hang for that id even though the actual endpoint is available.
+            # Try both forms, and treat a timeout like a failed attempt so the
+            # compatibility retries below still run.
+            device_ids = [information.id]
+            pending_suffix = "_PendingRequest"
+            if information.id.endswith(pending_suffix):
+                device_ids.append(information.id[:-len(pending_suffix)])
+
+            async def from_id(device_id, parameters=None):
+                try:
+                    if parameters is None:
+                        return await asyncio.wait_for(
+                            WiFiDirectDevice.from_id_async(device_id), 15
+                        )
+                    return await asyncio.wait_for(
+                        WiFiDirectDevice.from_id_async(device_id, parameters), 15
+                    )
+                except TimeoutError:
+                    logger.warning("Wi-Fi Direct FromIdAsync timed out for %s", device_id)
+                    return None
+
+            device = None
+            for device_id in device_ids:
+                device = await from_id(device_id)
+                if device is not None:
+                    break
             if device is None:
                 from winrt.windows.devices.wifidirect import (
                     WiFiDirectConfigurationMethod,
@@ -348,14 +373,16 @@ class PythonWinRTRadio:
                 parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
                 parameters.group_owner_intent = 15
                 logger.info("Direct accept returned None; retrying with connection parameters")
-                device = await asyncio.wait_for(
-                    WiFiDirectDevice.from_id_async(information.id, parameters), 15
-                )
+                for device_id in device_ids:
+                    device = await from_id(device_id, parameters)
+                    if device is not None:
+                        break
             if device is None:
                 await asyncio.sleep(1.0)
-                device = await asyncio.wait_for(
-                    WiFiDirectDevice.from_id_async(information.id), 15
-                )
+                for device_id in device_ids:
+                    device = await from_id(device_id)
+                    if device is not None:
+                        break
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_accept", "Windows returned no Wi-Fi Direct device for the accepted request"
