@@ -499,10 +499,47 @@ class PythonWinRTRadio:
         )
 
         started = time.monotonic()
+        requested_device_id = device_id
+        requested_address = address
+        requested_address_type = address_type
+        selected_peer = next(
+            (peer for peer in self.ble_peers.values() if peer.get("device_id") == device_id),
+            None,
+        )
+        selected_name = str((selected_peer or {}).get("name") or "").strip().casefold()
+        if selected_name:
+            cutoff = time.monotonic() - 20.0
+            aliases = [
+                peer for peer in self.ble_peers.values()
+                if str(peer.get("name") or "").strip().casefold() == selected_name
+                and float(peer.get("seen_at", 0.0)) >= cutoff
+                and peer.get("connectable", True)
+            ]
+            if aliases:
+                preferred = max(
+                    aliases,
+                    key=lambda peer: (
+                        bool(peer.get("is_paired")),
+                        float(peer.get("seen_at", 0.0)),
+                        int(peer.get("rssi", -999)),
+                    ),
+                )
+                device_id = str(preferred.get("device_id") or preferred["token"])
+                address = str(preferred["address"])
+                address_type = str(preferred["address_type"])
+                if address != requested_address:
+                    logger.info(
+                        "[%s] Selected alternate Windows BLE identity for %r requested=%s/%s "
+                        "selected=%s/%s paired=%s rssi=%s aliases=%d",
+                        attempt_id, preferred.get("name"), requested_address, requested_address_type,
+                        address, address_type, preferred.get("is_paired"), preferred.get("rssi"), len(aliases),
+                    )
         numeric_address = int(address, 16)
         logger.info(
-            "[%s] Bluetooth metadata bootstrap start device_id=%s address=%s address_type=%s thread=%s",
-            attempt_id, device_id, address, address_type, threading.current_thread().name,
+            "[%s] Bluetooth metadata bootstrap start requested_device_id=%s selected_device_id=%s "
+            "address=%s address_type=%s thread=%s",
+            attempt_id, requested_device_id, device_id, address, address_type,
+            threading.current_thread().name,
         )
         self.on_event(
             {
@@ -673,8 +710,10 @@ class PythonWinRTRadio:
             {
                 "event": "bluetooth_ready",
                 "attempt_id": attempt_id,
-                "address": address,
-                "address_type": address_type,
+                # Correlate the result with the UI selection even if Windows
+                # supplied a better privacy/bond alias for the actual GATT link.
+                "address": requested_address,
+                "address_type": requested_address_type,
                 "token": token,
                 "name": str(metadata["name"]),
                 "device_id": str(metadata["device_id"]),

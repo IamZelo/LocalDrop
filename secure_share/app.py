@@ -357,9 +357,19 @@ class MainWindow(QMainWindow):
             existing_token = self.ble_name_index.get(name_key) if name_key else None
             if existing_token and existing_token != token:
                 existing = self.ble_peers.get(existing_token, {})
+                existing_score = (
+                    bool(existing.get("is_paired")),
+                    bool(existing.get("connectable", True)),
+                    int(existing.get("rssi", -999)),
+                )
+                incoming_score = (
+                    bool(event.get("is_paired")),
+                    bool(event.get("connectable", True)),
+                    int(event.get("rssi", -999)),
+                )
                 if (
                     existing_token == self.pending_ble_token
-                    or int(existing.get("rssi", -999)) > int(event.get("rssi", -999))
+                    or existing_score >= incoming_score
                 ):
                     return
                 self.ble_tokens.discard(existing_token)
