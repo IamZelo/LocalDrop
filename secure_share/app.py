@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import threading
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qasync import QEventLoop
 
 from .discovery import DiscoveredPeer, Discovery
 from .identity import load_or_create_identity
@@ -271,12 +273,20 @@ class MainWindow(QMainWindow):
         # Establish the Bluetooth relationship and read the peer's encrypted
         # metadata before turning on Wi-Fi Direct discovery.
         try:
-            self.radio.pair_bluetooth(self.ble_peers[ble_token]["address"], ble_token)
+            peer = self.ble_peers[ble_token]
+            self.radio.pair_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
         except (KeyError, RuntimeError) as exc:
             self.status.setText(f"Bluetooth pairing could not start: {exc}")
             self.reset_workflow()
             return
-        QTimer.singleShot(90000, lambda token=ble_token: self._wifi_lookup_timed_out(token))
+        QTimer.singleShot(60000, lambda token=ble_token: self._bluetooth_pairing_timed_out(token))
+
+    def _bluetooth_pairing_timed_out(self, token: str) -> None:
+        if self.workflow_active and self.pending_ble_token == token:
+            logger.error("Bluetooth pairing timed out after 60 seconds for discovery token %s", token)
+            self.radio.cancel_bluetooth_pairing()
+            self.status.setText("Bluetooth pairing or encrypted metadata exchange timed out. See the console diagnostics.")
+            self.reset_workflow()
 
     def _wifi_lookup_timed_out(self, token: str) -> None:
         if self.workflow_active and self.pending_ble_token == token and not self.pending_radio_id:
@@ -318,8 +328,16 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def handle_radio_event(self, event: dict) -> None:
         kind = event.get("event")
-        if kind in {"error", "fatal", "wifi_direct_error", "bluetooth_pairing_error", "bluetooth_stopped"}:
-            logger.error("Radio event: %s", event)
+        error_events = {
+            "error", "fatal", "wifi_direct_error", "bluetooth_pairing_error",
+            "bluetooth_discovery_error", "bluetooth_stopped",
+        }
+        if kind in error_events:
+            logger.error("Radio event: %s", {key: value for key, value in event.items() if key != "traceback"})
+            if event.get("traceback"):
+                logger.error("Full radio traceback:\n%s", event["traceback"])
+        elif kind == "ble_peer":
+            logger.debug("Radio event: %s", event)
         else:
             logger.info("Radio event: %s", event)
 
@@ -333,6 +351,10 @@ class MainWindow(QMainWindow):
             self.refresh_nearby_devices()
         elif kind == "bluetooth_pairing_started":
             self.status.setText("Waiting for Windows Bluetooth pairing to complete…")
+        elif kind == "bluetooth_pairing_ceremony":
+            self.status.setText("Confirm the Windows Bluetooth pairing prompt...")
+        elif kind == "wifi_direct_starting":
+            self.status.setText("Bluetooth paired. Starting Wi-Fi Direct...")
         elif kind == "bluetooth_paired":
             if not self.workflow_active or not self.pending_ble_token:
                 return
@@ -357,6 +379,7 @@ class MainWindow(QMainWindow):
                 self._connect_matching_wifi_peer(*cached)
             else:
                 self.scan_radios()
+            QTimer.singleShot(30000, lambda token=wifi_token: self._wifi_lookup_timed_out(token))
             self.refresh_nearby_devices()
         elif kind == "wifi_direct_peer":
             self.radio_peers[event["id"]] = event
@@ -381,10 +404,12 @@ class MainWindow(QMainWindow):
                 self.status.setText("Connection accepted. Establishing the direct Wi-Fi link…")
         elif kind == "wifi_direct_connected":
             self.handle_wifi_connected(event)
-        elif kind in {"error", "fatal", "wifi_direct_error", "bluetooth_pairing_error", "bluetooth_stopped"}:
+        elif kind in error_events:
             self.scan_pending = False
-            self.status.setText(f"Radio error: {event.get('message') or event.get('error') or kind}")
-            if self.workflow_active:
+            phase = event.get("phase")
+            prefix = f"{phase}: " if phase and phase != "unknown" else ""
+            self.status.setText(f"Radio error: {prefix}{event.get('message') or event.get('error') or kind}")
+            if self.workflow_active and kind != "bluetooth_discovery_error":
                 self.reset_workflow()
 
     def refresh_nearby_devices(self) -> None:
@@ -512,7 +537,7 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
     )
@@ -524,6 +549,9 @@ def main() -> None:
     logger.info("Starting Local Secure Share with Python %s", sys.version.replace("\n", " "))
     app = QApplication(sys.argv)
     app.setApplicationName("Local Secure Share")
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
     window = MainWindow()
     window.show()
-    raise SystemExit(app.exec())
+    with loop:
+        loop.run_forever()

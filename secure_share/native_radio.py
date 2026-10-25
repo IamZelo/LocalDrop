@@ -119,36 +119,63 @@ class HelperNativeRadio:
         self.stderr_thread = None
 
 
+class UnavailableRadio:
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    @property
+    def supported(self) -> bool:
+        return False
+
+    def start(self) -> bool:
+        logger.error("Radio backend unavailable: %s", self.reason)
+        return False
+
+    def scan_wifi_direct(self) -> None:
+        raise RuntimeError(self.reason)
+
+    def connect_wifi_direct(self, _device_id: str) -> None:
+        raise RuntimeError(self.reason)
+
+    def pair_bluetooth(self, _device_id: str, _address: str, _address_type: str) -> None:
+        raise RuntimeError(self.reason)
+
+    def cancel_bluetooth_pairing(self) -> None:
+        return
+
+    def close(self) -> None:
+        return
+
+
 class NativeRadio:
-    """Prefer in-process PyWinRT; retain the compiled helper as a fallback."""
+    """Single Windows radio implementation backed by in-process PyWinRT."""
 
     def __init__(self, device_id: str, port: int, on_event: Callable[[dict], None]):
         self.on_event = on_event
         self.implementation = "unavailable"
-        if sys.platform == "win32":
-            try:
-                from .winrt_radio import PythonWinRTRadio, available
+        if sys.platform != "win32":
+            self.backend = UnavailableRadio("Native Bluetooth and Wi-Fi Direct require Windows 11")
+            return
+        try:
+            from .winrt_radio import PythonWinRTRadio, missing_modules
 
-                if available():
-                    self.backend = PythonWinRTRadio(device_id, port, on_event)
-                    self.implementation = "python-winrt"
-                    logger.info("Selected radio backend: Python WinRT (no helper executable)")
-                    return
-                from .winrt_radio import missing_modules
-                logger.error(
-                    "Python WinRT packages are incomplete. Missing modules: %s. "
-                    "Run: python -m pip install -r requirements.txt",
-                    ", ".join(missing_modules()),
+            missing = missing_modules()
+            if missing:
+                reason = (
+                    f"Python WinRT packages are incomplete: {', '.join(missing)}. "
+                    "Run: python -m pip install -r requirements.txt"
                 )
-            except Exception as exc:
-                logger.exception("Could not inspect or load Python WinRT")
-                on_event({"event": "error", "message": f"Could not load Python WinRT: {exc}"})
-        self.backend = HelperNativeRadio(device_id, port, on_event)
-        if self.backend.supported:
-            self.implementation = "dotnet-helper"
-            logger.warning("Selected legacy .NET helper because Python WinRT is unavailable")
-        else:
-            logger.error("No radio backend is available")
+                logger.error(reason)
+                self.backend = UnavailableRadio(reason)
+                return
+            self.backend = PythonWinRTRadio(device_id, port, on_event)
+            self.implementation = "python-winrt"
+            logger.info("Selected radio backend: Python WinRT (single backend; no helper fallback)")
+        except Exception as exc:
+            logger.exception("Could not inspect or load Python WinRT")
+            reason = f"Could not load Python WinRT: {exc}"
+            on_event({"event": "error", "message": reason})
+            self.backend = UnavailableRadio(reason)
 
     @property
     def supported(self) -> bool:
@@ -166,8 +193,11 @@ class NativeRadio:
     def connect_wifi_direct(self, device_id: str) -> None:
         self.backend.connect_wifi_direct(device_id)
 
-    def pair_bluetooth(self, address: str, expected_token: str) -> None:
-        self.backend.pair_bluetooth(address, expected_token)
+    def pair_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
+        self.backend.pair_bluetooth(device_id, address, address_type)
+
+    def cancel_bluetooth_pairing(self) -> None:
+        self.backend.cancel_bluetooth_pairing()
 
     def close(self) -> None:
         self.backend.close()

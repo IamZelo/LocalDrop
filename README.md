@@ -18,11 +18,12 @@ Native Wi-Fi Direct group creation is available through the optional Windows hel
 
 ## Native Bluetooth and Wi-Fi Direct on Windows
 
-The Windows build uses PyWinRT directly inside the Python process to:
+The Windows 11 build uses PyWinRT directly inside the Python process to:
 
-- advertises a rotating, anonymous application token over Bluetooth LE;
-- scans for nearby application advertisements;
-- advertises and scans for Windows Wi-Fi Direct endpoints;
+- advertise a connectable Bluetooth LE GATT service containing the hostname in its discovery payload;
+- resolve advertisements to canonical Windows Bluetooth association endpoints, including their public/random address type;
+- request Windows-managed encrypted Bluetooth pairing and exchange app metadata over GATT;
+- start and scan for Windows Wi-Fi Direct endpoints only after that encrypted metadata exchange;
 - creates or accepts a Wi-Fi Direct link; and
 - reports the new local endpoint to the Python application, which restarts mDNS discovery on that link.
 
@@ -33,11 +34,11 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-The UI shows Bluetooth proximity separately from Windows Wi-Fi Direct endpoints. Select the corresponding nearby computer under **Wi-Fi Direct devices**, click **Connect directly**, then use the normal one-time-code application pairing. Windows may show its own radio-pairing consent dialog first.
+The UI presents one Bluetooth-derived nearby-device list. Drop files, select a computer, approve the Windows Bluetooth consent prompt, and then approve the incoming Wi-Fi Direct connection on the receiver. The app's one-time-code identity check remains a separate end-to-end security layer for first-time devices.
 
-Bluetooth discovery deliberately does not broadcast a username, stable device ID, filename, or IP address. The rotating BLE token is used only to indicate that another copy of the app is physically nearby; cryptographic identity is established later by the application pairing code.
+Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. Stable device identity, the rotating Wi-Fi correlation token, transfer port, filenames, and IP addresses are not exposed in the advertisement; identity metadata is read only from the encryption-required GATT characteristic.
 
-The older .NET radio helper remains in `native/windows` as a compatibility fallback, but it is not required when the `winrt-*` packages are installed.
+The runtime uses one radio path: in-process Python WinRT. The older source under `native/windows` is retained for reference but is not selected as a fallback.
 
 For detailed console diagnostics on either laptop, run:
 
