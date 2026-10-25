@@ -92,8 +92,11 @@ class HelperNativeRadio:
     def connect_wifi_direct(self, device_id: str) -> None:
         self.command("connect_wifi_direct", id=device_id)
 
-    def pair_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
-        raise RuntimeError("Bluetooth metadata pairing requires the Python WinRT backend")
+    def prepare_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
+        raise RuntimeError("Bluetooth metadata exchange requires the Python WinRT backend")
+
+    def cancel_bluetooth_preparation(self) -> None:
+        return
 
     def close(self) -> None:
         process = self.process
@@ -137,10 +140,10 @@ class UnavailableRadio:
     def connect_wifi_direct(self, _device_id: str) -> None:
         raise RuntimeError(self.reason)
 
-    def pair_bluetooth(self, _device_id: str, _address: str, _address_type: str) -> None:
+    def prepare_bluetooth(self, _device_id: str, _address: str, _address_type: str) -> None:
         raise RuntimeError(self.reason)
 
-    def cancel_bluetooth_pairing(self) -> None:
+    def cancel_bluetooth_preparation(self) -> None:
         return
 
     def close(self) -> None:
@@ -193,11 +196,11 @@ class NativeRadio:
     def connect_wifi_direct(self, device_id: str) -> None:
         self.backend.connect_wifi_direct(device_id)
 
-    def pair_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
-        self.backend.pair_bluetooth(device_id, address, address_type)
+    def prepare_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
+        self.backend.prepare_bluetooth(device_id, address, address_type)
 
-    def cancel_bluetooth_pairing(self) -> None:
-        self.backend.cancel_bluetooth_pairing()
+    def cancel_bluetooth_preparation(self) -> None:
+        self.backend.cancel_bluetooth_preparation()
 
     def close(self) -> None:
         self.backend.close()

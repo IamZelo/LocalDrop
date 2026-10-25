@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -130,6 +131,7 @@ class MainWindow(QMainWindow):
         self.radio_peers: dict[str, dict] = {}
         self.ble_tokens: set[str] = set()
         self.ble_peers: dict[str, dict] = {}
+        self.ble_name_index: dict[str, str] = {}
         self.paths: list[Path] = []
         self.workflow_active = False
         self.pending_ble_token: str | None = None
@@ -144,6 +146,10 @@ class MainWindow(QMainWindow):
         self.scan_timer = QTimer(self)
         self.scan_timer.setInterval(4000)
         self.scan_timer.timeout.connect(self.scan_radios)
+        self.ble_expiry_timer = QTimer(self)
+        self.ble_expiry_timer.setInterval(5000)
+        self.ble_expiry_timer.timeout.connect(self.prune_nearby_devices)
+        self.ble_expiry_timer.start()
         if self.radio.start():
             self.status.setText("Starting Bluetooth discovery…")
         else:
@@ -268,24 +274,25 @@ class MainWindow(QMainWindow):
         self.pending_peer = None
         self.devices.setEnabled(False)
         self.progress.setValue(0)
-        self.status.setText("Pairing with the device over Bluetooth…")
+        self.status.setText("Contacting the device over Bluetooth...")
 
-        # Establish the Bluetooth relationship and read the peer's encrypted
-        # metadata before turning on Wi-Fi Direct discovery.
+        # Read short-lived Wi-Fi bootstrap metadata over BLE. Windows Bluetooth
+        # pairing is deliberately not required; durable trust is established
+        # later by the TLS/short-code application protocol.
         try:
             peer = self.ble_peers[ble_token]
-            self.radio.pair_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
+            self.radio.prepare_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
         except (KeyError, RuntimeError) as exc:
-            self.status.setText(f"Bluetooth pairing could not start: {exc}")
+            self.status.setText(f"Bluetooth metadata exchange could not start: {exc}")
             self.reset_workflow()
             return
-        QTimer.singleShot(60000, lambda token=ble_token: self._bluetooth_pairing_timed_out(token))
+        QTimer.singleShot(30000, lambda token=ble_token: self._bluetooth_metadata_timed_out(token))
 
-    def _bluetooth_pairing_timed_out(self, token: str) -> None:
+    def _bluetooth_metadata_timed_out(self, token: str) -> None:
         if self.workflow_active and self.pending_ble_token == token:
-            logger.error("Bluetooth pairing timed out after 60 seconds for discovery token %s", token)
-            self.radio.cancel_bluetooth_pairing()
-            self.status.setText("Bluetooth pairing or encrypted metadata exchange timed out. See the console diagnostics.")
+            logger.error("Bluetooth metadata exchange timed out after 30 seconds for discovery token %s", token)
+            self.radio.cancel_bluetooth_preparation()
+            self.status.setText("Bluetooth metadata exchange timed out. See the console diagnostics.")
             self.reset_workflow()
 
     def _wifi_lookup_timed_out(self, token: str) -> None:
@@ -329,7 +336,7 @@ class MainWindow(QMainWindow):
     def handle_radio_event(self, event: dict) -> None:
         kind = event.get("event")
         error_events = {
-            "error", "fatal", "wifi_direct_error", "bluetooth_pairing_error",
+            "error", "fatal", "wifi_direct_error", "bluetooth_metadata_error",
             "bluetooth_discovery_error", "bluetooth_stopped",
         }
         if kind in error_events:
@@ -345,17 +352,29 @@ class MainWindow(QMainWindow):
             implementation = event.get("implementation", "native")
             self.ble_status.setText(f"Scanning · {implementation}")
         elif kind == "ble_peer":
-            self.ble_tokens.add(event["token"])
-            self.ble_peers[event["token"]] = event
+            token = event["token"]
+            name_key = str(event.get("name") or "").strip().casefold()
+            existing_token = self.ble_name_index.get(name_key) if name_key else None
+            if existing_token and existing_token != token:
+                existing = self.ble_peers.get(existing_token, {})
+                if (
+                    existing_token == self.pending_ble_token
+                    or int(existing.get("rssi", -999)) > int(event.get("rssi", -999))
+                ):
+                    return
+                self.ble_tokens.discard(existing_token)
+                self.ble_peers.pop(existing_token, None)
+            if name_key:
+                self.ble_name_index[name_key] = token
+            self.ble_tokens.add(token)
+            self.ble_peers[token] = event
             self.ble_status.setText(f"{len(self.ble_tokens)} nearby")
             self.refresh_nearby_devices()
-        elif kind == "bluetooth_pairing_started":
-            self.status.setText("Waiting for Windows Bluetooth pairing to complete…")
-        elif kind == "bluetooth_pairing_ceremony":
-            self.status.setText("Confirm the Windows Bluetooth pairing prompt...")
+        elif kind == "bluetooth_metadata_started":
+            self.status.setText("Reading Wi-Fi connection details over Bluetooth...")
         elif kind == "wifi_direct_starting":
-            self.status.setText("Bluetooth paired. Starting Wi-Fi Direct...")
-        elif kind == "bluetooth_paired":
+            self.status.setText("Bluetooth metadata received. Starting Wi-Fi Direct...")
+        elif kind == "bluetooth_ready":
             if not self.workflow_active or not self.pending_ble_token:
                 return
             discovered = self.ble_peers.get(self.pending_ble_token, {})
@@ -369,7 +388,10 @@ class MainWindow(QMainWindow):
             self.ble_peers[wifi_token] = discovered
             self.ble_tokens.add(wifi_token)
             self.pending_ble_token = wifi_token
-            self.status.setText(f"Bluetooth paired with {event['name']}. Finding its Wi-Fi Direct endpoint…")
+            name_key = str(event.get("name") or "").strip().casefold()
+            if name_key:
+                self.ble_name_index[name_key] = wifi_token
+            self.status.setText(f"Found {event['name']} over Bluetooth. Finding its Wi-Fi Direct endpoint...")
             cached = next(
                 ((radio_id, peer) for radio_id, peer in self.radio_peers.items()
                  if peer.get("token") == self.pending_ble_token),
@@ -421,7 +443,7 @@ class MainWindow(QMainWindow):
             peer = wifi_by_token.get(token, {})
             ble_peer = self.ble_peers.get(token, {})
             trusted = self.store.peer(peer.get("device_id", "")) if peer else None
-            trust = " · trusted" if trusted else " · first-time pairing required"
+            trust = " · trusted" if trusted else " · secure verification required"
             name = peer.get("name") or ble_peer.get("name") or f"Nearby device {token[-4:]}"
             item = QListWidgetItem(f"{name}\nBluetooth nearby{trust}")
             item.setData(Qt.UserRole, token)
@@ -432,6 +454,22 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem("Searching for nearby devices over Bluetooth…")
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
             self.devices.addItem(item)
+
+    def prune_nearby_devices(self) -> None:
+        cutoff = time.monotonic() - 20.0
+        removed = False
+        for token, peer in list(self.ble_peers.items()):
+            if token == self.pending_ble_token or float(peer.get("seen_at", 0.0)) >= cutoff:
+                continue
+            self.ble_peers.pop(token, None)
+            self.ble_tokens.discard(token)
+            name_key = str(peer.get("name") or "").strip().casefold()
+            if name_key and self.ble_name_index.get(name_key) == token:
+                self.ble_name_index.pop(name_key, None)
+            removed = True
+        if removed:
+            self.ble_status.setText(f"{len(self.ble_tokens)} nearby")
+            self.refresh_nearby_devices()
 
     def handle_wifi_connected(self, event: dict) -> None:
         if not self.workflow_active or event.get("id") != self.pending_radio_id:
@@ -455,7 +493,7 @@ class MainWindow(QMainWindow):
             self.status.setText("Sending a file offer; waiting for the receiver to accept…")
             self.network.send_files(self.pending_peer, list(self.paths))
         else:
-            self.status.setText("First connection: secure device pairing is required before the file offer.")
+            self.status.setText("First connection: verify the device with a one-time code before sending files.")
             if not self.network.pair(self.pending_peer):
                 self.reset_workflow()
 
@@ -464,10 +502,10 @@ class MainWindow(QMainWindow):
         address, code = request.payload
         answer = QMessageBox.question(
             self,
-            "Allow this device?",
-            f"A nearby device at {address} wants to pair.\n\n"
+            "Verify this device?",
+            f"A nearby device at {address} wants to establish app trust.\n\n"
             f"Enter this one-time code on the sending device:\n\n{code}\n\n"
-            "Allow pairing?",
+            "Allow this verification?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -477,7 +515,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def enter_pair_code(self, request: Request) -> None:
         name = request.payload
-        value, ok = QInputDialog.getText(self, "Enter pairing code", f"Enter the code shown on {name}:")
+        value, ok = QInputDialog.getText(self, "Verify nearby device", f"Enter the code shown on {name}:")
         normalized = value.upper().replace("-", "").replace(" ", "")
         if ok and len(normalized) == 8 and all(char in CODE_ALPHABET for char in normalized):
             request.result = normalized
@@ -505,10 +543,10 @@ class MainWindow(QMainWindow):
         if not self.workflow_active or not self.pending_peer:
             return
         if self.store.peer(self.pending_peer.device_id):
-            self.status.setText("Paired. Sending the file offer; waiting for acceptance…")
+            self.status.setText("Device verified. Sending the file offer; waiting for acceptance…")
             self.network.send_files(self.pending_peer, list(self.paths))
         else:
-            self.status.setText("Pairing was not completed.")
+            self.status.setText("Device verification was not completed.")
             self.reset_workflow()
 
     @Slot(bool)
@@ -530,6 +568,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.scan_timer.stop()
+        self.ble_expiry_timer.stop()
         self.radio.close()
         self.discovery.close()
         self.network.close()

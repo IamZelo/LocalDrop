@@ -22,8 +22,8 @@ The Windows 11 build uses PyWinRT directly inside the Python process to:
 
 - advertise a connectable Bluetooth LE GATT service containing the hostname in its discovery payload;
 - resolve advertisements to canonical Windows Bluetooth association endpoints, including their public/random address type;
-- request Windows-managed encrypted Bluetooth pairing and exchange app metadata over GATT;
-- start and scan for Windows Wi-Fi Direct endpoints only after that encrypted metadata exchange;
+- exchange non-sensitive Wi-Fi bootstrap metadata over Bluetooth GATT without creating a Windows Bluetooth bond;
+- start and scan for Windows Wi-Fi Direct endpoints only after that metadata exchange;
 - creates or accepts a Wi-Fi Direct link; and
 - reports the new local endpoint to the Python application, which restarts mDNS discovery on that link.
 
@@ -34,9 +34,9 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-The UI presents one Bluetooth-derived nearby-device list. Drop files, select a computer, approve the Windows Bluetooth consent prompt, and then approve the incoming Wi-Fi Direct connection on the receiver. The app's one-time-code identity check remains a separate end-to-end security layer for first-time devices.
+The UI presents one Bluetooth-derived nearby-device list. Drop files, select a computer, and approve the incoming Wi-Fi Direct connection on the receiver. No Windows Bluetooth pairing is required. The app's one-time-code identity check remains the end-to-end security layer for first-time devices.
 
-Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. Stable device identity, the rotating Wi-Fi correlation token, transfer port, filenames, and IP addresses are not exposed in the advertisement; identity metadata is read only from the encryption-required GATT characteristic.
+Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. The GATT bootstrap response supplies the local transfer port, rotating Wi-Fi correlation token, and app identity needed to locate the peer. It never contains file names, file contents, credentials, or private keys.
 
 The runtime uses one radio path: in-process Python WinRT. The older source under `native/windows` is retained for reference but is not selected as a fallback.
 

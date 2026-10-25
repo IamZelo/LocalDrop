@@ -22,18 +22,6 @@ METADATA_CHARACTERISTIC_UUID = uuid.UUID("68b12e51-6f7d-4d91-9f8a-c64f2bd24a10")
 logger = logging.getLogger("secure_share.radio.winrt")
 
 
-PAIRING_STATUS_HELP = {
-    "ACCESS_DENIED": "Windows denied Bluetooth pairing access. Check Bluetooth permissions and run the app normally, not elevated.",
-    "AUTHENTICATION_FAILURE": "The devices could not authenticate each other. Remove any stale Windows Bluetooth association on both laptops and retry.",
-    "OPERATION_ALREADY_IN_PROGRESS": "Windows is already pairing or unpairing this device. Wait for that operation to finish.",
-    "PAIRING_CANCELED": "The Windows Bluetooth consent prompt was cancelled or timed out.",
-    "PROTECTION_LEVEL_COULD_NOT_BE_MET": "The peer or Bluetooth adapter could not provide the required encrypted pairing protection.",
-    "REMOTE_DEVICE_HAS_ASSOCIATION": "The peer has a stale Bluetooth association. Remove the device from Bluetooth settings on both laptops.",
-    "REQUIRED_HANDLER_NOT_REGISTERED": "Windows requested a pairing ceremony for which no handler was registered.",
-    "REJECTED_BY_HANDLER": "The Bluetooth pairing request was rejected by a pairing handler.",
-}
-
-
 class RadioOperationError(RuntimeError):
     def __init__(self, phase: str, message: str, *, status: str | None = None):
         super().__init__(message)
@@ -43,11 +31,6 @@ class RadioOperationError(RuntimeError):
 
 def _enum_name(value: object) -> str:
     return str(getattr(value, "name", value))
-
-
-def _pairing_failure_message(status: str) -> str:
-    detail = PAIRING_STATUS_HELP.get(status, "Windows returned an unspecified Bluetooth pairing failure.")
-    return f"Bluetooth pairing failed: {status}. {detail}"
 
 
 def _exception_event(error_event: str, exc: BaseException, attempt_id: str | None = None) -> dict:
@@ -134,8 +117,8 @@ class PythonWinRTRadio:
         self.ble_resolving: set[tuple[int, str]] = set()
         self.ble_peers: dict[tuple[int, str], dict] = {}
         self.ble_last_emitted: dict[tuple[int, str], float] = {}
-        self.active_pairing_attempt: str | None = None
-        self.pairing_future = None
+        self.active_metadata_attempt: str | None = None
+        self.metadata_future = None
         self.wifi_publisher = None
         self.wifi_group_owner = False
         self.wifi_listener = None
@@ -243,7 +226,10 @@ class PythonWinRTRadio:
         ).encode("utf-8")
         parameters = GattLocalCharacteristicParameters()
         parameters.characteristic_properties = GattCharacteristicProperties.READ
-        parameters.read_protection_level = GattProtectionLevel.ENCRYPTION_REQUIRED
+        # This characteristic contains bootstrap data only. Durable identity
+        # authentication still happens over TLS with the application's
+        # short-code protocol after Wi-Fi Direct connects.
+        parameters.read_protection_level = GattProtectionLevel.PLAIN
         characteristic_result = await result.service_provider.service.create_characteristic_async(
             METADATA_CHARACTERISTIC_UUID, parameters
         )
@@ -268,7 +254,7 @@ class PythonWinRTRadio:
         )
         self._remember_event(self.gatt_provider, "advertisement_status_changed", status_token)
         self.gatt_provider.start_advertising_with_parameters(advertising)
-        logger.info("Encrypted Bluetooth GATT control service started")
+        logger.info("Bluetooth GATT bootstrap service started (OS pairing not required)")
 
     def _bluetooth_advertisement_status_changed(self, _sender, args) -> None:
         status = _enum_name(args.status)
@@ -286,7 +272,7 @@ class PythonWinRTRadio:
 
     async def _serve_metadata_read(self, args, deferral) -> None:
         try:
-            logger.info("Encrypted Bluetooth metadata read requested by a peer")
+            logger.info("Bluetooth bootstrap metadata read requested by a peer")
             request = await args.get_request_async()
             if request is None:
                 raise RadioOperationError(
@@ -294,13 +280,13 @@ class PythonWinRTRadio:
                 )
             # The metadata-serving/receiving side owns the temporary group;
             # the sender joins it after receiving the metadata response.
-            self._ensure_wifi_direct_started("encrypted Bluetooth metadata request", prefer_group_owner=True)
+            self._ensure_wifi_direct_started("Bluetooth bootstrap metadata request", prefer_group_owner=True)
             request.respond_with_value(self._buffer(self.metadata))
             self.on_event({"event": "bluetooth_metadata_received"})
-            logger.info("Encrypted Bluetooth metadata returned; Wi-Fi Direct is now available")
+            logger.info("Bluetooth bootstrap metadata returned; Wi-Fi Direct is now available")
         except Exception as exc:
-            logger.exception("Incoming encrypted Bluetooth metadata read failed")
-            self.on_event(_exception_event("bluetooth_pairing_error", exc))
+            logger.exception("Incoming Bluetooth bootstrap metadata read failed")
+            self.on_event(_exception_event("bluetooth_metadata_error", exc))
         finally:
             deferral.complete()
 
@@ -378,8 +364,8 @@ class PythonWinRTRadio:
             key = (int(args.bluetooth_address), address_type)
             peer = self.ble_peers.get(key)
             if peer is not None:
-                peer.update({"rssi": rssi, "name": peer.get("name") or name})
                 now = time.monotonic()
+                peer.update({"rssi": rssi, "name": peer.get("name") or name, "seen_at": now})
                 if now - self.ble_last_emitted.get(key, 0.0) < 10.0:
                     return
                 self.ble_last_emitted[key] = now
@@ -397,6 +383,7 @@ class PythonWinRTRadio:
                 "rssi": rssi,
                 "name": name,
                 "connectable": bool(args.is_connectable),
+                "seen_at": time.monotonic(),
             }
             assert self.loop
             self.loop.call_soon_threadsafe(
@@ -456,53 +443,52 @@ class PythonWinRTRadio:
         finally:
             self.ble_resolving.discard(key)
 
-    def pair_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
-        if self.active_pairing_attempt:
-            raise RuntimeError(f"Bluetooth pairing attempt {self.active_pairing_attempt} is already running")
+    def prepare_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
+        if self.active_metadata_attempt:
+            raise RuntimeError(f"Bluetooth metadata attempt {self.active_metadata_attempt} is already running")
         attempt_id = uuid.uuid4().hex[:8].upper()
-        self.active_pairing_attempt = attempt_id
+        self.active_metadata_attempt = attempt_id
         try:
-            self.pairing_future = self._schedule(
-                self._pair_bluetooth_with_cleanup(device_id, address, address_type, attempt_id),
-                "bluetooth_pairing_error",
+            self.metadata_future = self._schedule(
+                self._prepare_bluetooth_with_cleanup(device_id, address, address_type, attempt_id),
+                "bluetooth_metadata_error",
                 attempt_id,
             )
         except Exception:
-            self.active_pairing_attempt = None
+            self.active_metadata_attempt = None
             raise
 
-    def cancel_bluetooth_pairing(self) -> None:
-        future = self.pairing_future
+    def cancel_bluetooth_preparation(self) -> None:
+        future = self.metadata_future
         if future is not None and not future.done():
-            logger.warning("Cancelling Bluetooth pairing attempt=%s after application timeout", self.active_pairing_attempt)
+            logger.warning("Cancelling Bluetooth metadata attempt=%s after application timeout", self.active_metadata_attempt)
             future.cancel()
 
-    async def _pair_bluetooth_with_cleanup(
+    async def _prepare_bluetooth_with_cleanup(
         self, device_id: str, address: str, address_type: str, attempt_id: str
     ) -> None:
         try:
-            await self._pair_bluetooth(device_id, address, address_type, attempt_id)
+            await self._prepare_bluetooth(device_id, address, address_type, attempt_id)
         finally:
-            if self.active_pairing_attempt == attempt_id:
-                self.active_pairing_attempt = None
-                self.pairing_future = None
+            if self.active_metadata_attempt == attempt_id:
+                self.active_metadata_attempt = None
+                self.metadata_future = None
 
-    async def _pair_bluetooth(
+    async def _prepare_bluetooth(
         self, device_id: str, address: str, address_type: str, attempt_id: str
     ) -> None:
         from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothLEDevice
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattCommunicationStatus
-        from winrt.windows.devices.enumeration import DevicePairingKinds, DevicePairingProtectionLevel
 
         started = time.monotonic()
         numeric_address = int(address, 16)
         logger.info(
-            "[%s] Bluetooth pairing start device_id=%s address=%s address_type=%s thread=%s",
+            "[%s] Bluetooth metadata bootstrap start device_id=%s address=%s address_type=%s thread=%s",
             attempt_id, device_id, address, address_type, threading.current_thread().name,
         )
         self.on_event(
             {
-                "event": "bluetooth_pairing_started",
+                "event": "bluetooth_metadata_started",
                 "attempt_id": attempt_id,
                 "device_id": device_id,
                 "address": address,
@@ -534,70 +520,16 @@ class PythonWinRTRadio:
 
         pairing = device.device_information.pairing
         logger.info(
-            "[%s] Endpoint name=%r can_pair=%s is_paired=%s protection=%s access=%s connection=%s",
+            "[%s] Endpoint name=%r can_pair=%s is_paired=%s protection=%s access=%s connection=%s; "
+            "skipping persistent Windows Bluetooth pairing",
             attempt_id, device.name, pairing.can_pair, pairing.is_paired,
             _enum_name(pairing.protection_level),
             _enum_name(device.device_access_information.current_status),
             _enum_name(device.connection_status),
         )
-        if not pairing.is_paired:
-            if not pairing.can_pair:
-                raise RadioOperationError(
-                    "pairing_precheck", "Windows reports that this Bluetooth association endpoint cannot be paired"
-                )
-            custom = pairing.custom
-            ceremony_seen = False
-
-            def pairing_requested(_sender, args) -> None:
-                nonlocal ceremony_seen
-                ceremony_seen = True
-                ceremony = _enum_name(args.pairing_kind)
-                pin = getattr(args, "pin", None)
-                logger.info(
-                    "[%s] Windows Bluetooth PairingRequested ceremony=%s pin=%r",
-                    attempt_id, ceremony, pin,
-                )
-                self.on_event(
-                    {
-                        "event": "bluetooth_pairing_ceremony",
-                        "attempt_id": attempt_id,
-                        "ceremony": ceremony,
-                        "pin": pin,
-                    }
-                )
-                if args.pairing_kind == DevicePairingKinds.CONFIRM_ONLY:
-                    args.accept()
-                    logger.info("[%s] ConfirmOnly ceremony accepted; waiting for Windows consent UI", attempt_id)
-                else:
-                    logger.error("[%s] Unsupported Bluetooth pairing ceremony=%s", attempt_id, ceremony)
-
-            event_token = custom.add_pairing_requested(pairing_requested)
-            try:
-                logger.info(
-                    "[%s] Calling custom PairAsync kinds=CONFIRM_ONLY minimum_protection=ENCRYPTION",
-                    attempt_id,
-                )
-                result = await custom.pair_with_protection_level_async(
-                    DevicePairingKinds.CONFIRM_ONLY,
-                    DevicePairingProtectionLevel.ENCRYPTION,
-                )
-            finally:
-                custom.remove_pairing_requested(event_token)
-            result_status = _enum_name(result.status)
-            protection_used = _enum_name(getattr(result, "protection_level_used", "unknown"))
-            logger.info(
-                "[%s] Windows Bluetooth pairing completed status=%s protection_used=%s ceremony_seen=%s elapsed=%.3fs",
-                attempt_id, result_status, protection_used, ceremony_seen, time.monotonic() - started,
-            )
-            if result_status not in {"PAIRED", "ALREADY_PAIRED"}:
-                raise RadioOperationError(
-                    "windows_pairing", _pairing_failure_message(result_status), status=result_status
-                )
-        else:
-            logger.info("[%s] Endpoint is already paired; continuing to encrypted metadata", attempt_id)
 
         phase_started = time.monotonic()
-        logger.info("[%s] Discovering uncached encrypted GATT metadata service", attempt_id)
+        logger.info("[%s] Discovering uncached Bluetooth bootstrap service", attempt_id)
         services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
             CONTROL_SERVICE_UUID, BluetoothCacheMode.UNCACHED
         )
@@ -618,7 +550,7 @@ class PythonWinRTRadio:
                     f"Bluetooth metadata characteristic unavailable: {status}",
                     status=status,
                 )
-            logger.info("[%s] Reading encryption-required Bluetooth metadata", attempt_id)
+            logger.info("[%s] Reading Bluetooth bootstrap metadata without creating an OS bond", attempt_id)
             read = await characteristics.characteristics[0].read_value_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
         finally:
             for characteristic in (characteristics.characteristics or []):
@@ -630,12 +562,11 @@ class PythonWinRTRadio:
         if read.status != GattCommunicationStatus.SUCCESS:
             status = _enum_name(read.status)
             raise RadioOperationError(
-                "gatt_metadata_read", f"Could not read encrypted Bluetooth metadata: {status}", status=status
+                "gatt_metadata_read", f"Could not read Bluetooth bootstrap metadata: {status}", status=status
             )
         logger.info(
-            "[%s] Encrypted Bluetooth metadata read succeeded in %.3fs secure_connection=%s",
+            "[%s] Bluetooth bootstrap metadata read succeeded in %.3fs",
             attempt_id, time.monotonic() - phase_started,
-            getattr(device, "was_secure_connection_used_for_pairing", "unknown"),
         )
 
         try:
@@ -651,12 +582,12 @@ class PythonWinRTRadio:
             raise RadioOperationError("gatt_metadata_validation", f"Invalid Bluetooth metadata: {exc}") from exc
 
         self._ensure_wifi_direct_started(
-            "successful encrypted Bluetooth pairing and metadata read", prefer_group_owner=False
+            "successful Bluetooth bootstrap metadata read", prefer_group_owner=False
         )
 
         self.on_event(
             {
-                "event": "bluetooth_paired",
+                "event": "bluetooth_ready",
                 "attempt_id": attempt_id,
                 "address": address,
                 "address_type": address_type,
@@ -666,7 +597,7 @@ class PythonWinRTRadio:
                 "port": int(metadata["port"]),
             }
         )
-        logger.info("[%s] Bluetooth-first phase complete in %.3fs", attempt_id, time.monotonic() - started)
+        logger.info("[%s] Bluetooth bootstrap phase complete in %.3fs", attempt_id, time.monotonic() - started)
 
     def _ensure_wifi_direct_started(self, reason: str, *, prefer_group_owner: bool) -> None:
         if self.wifi_publisher is not None:
@@ -783,7 +714,7 @@ class PythonWinRTRadio:
 
     def scan_wifi_direct(self) -> None:
         if self.wifi_publisher is None:
-            raise RuntimeError("Wi-Fi Direct is locked until encrypted Bluetooth pairing succeeds")
+            raise RuntimeError("Wi-Fi Direct is locked until Bluetooth bootstrap metadata is exchanged")
         self._schedule(self._scan_wifi_direct())
 
     async def _scan_wifi_direct(self) -> None:
@@ -871,7 +802,7 @@ class PythonWinRTRadio:
 
     def connect_wifi_direct(self, device_id: str) -> None:
         if self.wifi_publisher is None:
-            raise RuntimeError("Wi-Fi Direct is locked until encrypted Bluetooth pairing succeeds")
+            raise RuntimeError("Wi-Fi Direct is locked until Bluetooth bootstrap metadata is exchanged")
         self._schedule(self._connect_wifi_direct(device_id))
 
     async def _connect_wifi_direct(self, device_id: str) -> None:
