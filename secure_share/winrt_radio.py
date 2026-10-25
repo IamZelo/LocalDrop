@@ -690,18 +690,35 @@ class PythonWinRTRadio:
         service = services.services[0]
         characteristics = None
         try:
-            characteristics = await service.get_characteristics_for_uuid_with_cache_mode_async(
-                METADATA_CHARACTERISTIC_UUID, BluetoothCacheMode.UNCACHED
-            )
-            if characteristics.status != GattCommunicationStatus.SUCCESS or not characteristics.characteristics:
-                status = _enum_name(characteristics.status)
-                raise RadioOperationError(
-                    "gatt_characteristic_discovery",
-                    f"Bluetooth metadata characteristic unavailable: {status}",
-                    status=status,
-                )
+            for cache_mode in (BluetoothCacheMode.CACHED, BluetoothCacheMode.UNCACHED):
+                try:
+                    characteristics = await service.get_characteristics_for_uuid_with_cache_mode_async(
+                        METADATA_CHARACTERISTIC_UUID, cache_mode
+                    )
+                    if characteristics.status == GattCommunicationStatus.SUCCESS and characteristics.characteristics:
+                        break
+                except Exception:
+                    pass
+
+            if characteristics is None or characteristics.status != GattCommunicationStatus.SUCCESS or not characteristics.characteristics:
+                status = _enum_name(getattr(characteristics, "status", "UNKNOWN"))
+                logger.warning("[%s] Bluetooth metadata characteristic unavailable: %s; Wi-Fi Direct will continue", attempt_id, status)
+                return
+
             logger.info("[%s] Reading Bluetooth bootstrap metadata without creating an OS bond", attempt_id)
-            read = await characteristics.characteristics[0].read_value_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
+            read = None
+            for read_mode in (BluetoothCacheMode.CACHED, BluetoothCacheMode.UNCACHED):
+                try:
+                    read = await characteristics.characteristics[0].read_value_with_cache_mode_async(read_mode)
+                    if read.status == GattCommunicationStatus.SUCCESS:
+                        break
+                except Exception:
+                    pass
+
+            if read is None or read.status != GattCommunicationStatus.SUCCESS:
+                status = _enum_name(getattr(read, "status", "UNKNOWN"))
+                logger.warning("[%s] Could not read Bluetooth bootstrap metadata: %s; Wi-Fi Direct will continue", attempt_id, status)
+                return
         finally:
             for characteristic in (characteristics.characteristics if characteristics is not None else ()):
                 try:
@@ -709,11 +726,6 @@ class PythonWinRTRadio:
                 except Exception:
                     pass
             service.close()
-        if read.status != GattCommunicationStatus.SUCCESS:
-            status = _enum_name(read.status)
-            raise RadioOperationError(
-                "gatt_metadata_read", f"Could not read Bluetooth bootstrap metadata: {status}", status=status
-            )
         logger.info(
             "[%s] Bluetooth bootstrap metadata read succeeded in %.3fs",
             attempt_id, time.monotonic() - phase_started,
@@ -879,52 +891,19 @@ class PythonWinRTRadio:
         from winrt.windows.devices.enumeration import DeviceInformation
         from winrt.windows.devices.wifidirect import WiFiDirectDevice, WiFiDirectDeviceSelectorType
 
-        if self.wifi_watcher is not None:
-            self.on_event({"event": "wifi_direct_scan_complete", "count": len(self.wifi_scan_matches)})
-            return
-        selector = WiFiDirectDevice.get_device_selector(WiFiDirectDeviceSelectorType.ASSOCIATION_ENDPOINT)
-        self.wifi_watcher = DeviceInformation.create_watcher_aqs_filter_and_additional_properties(
-            selector, [IE_PROPERTY]
-        )
-        token = self.wifi_watcher.add_added(self._wifi_device_added)
-        self._remember_event(self.wifi_watcher, "added", token)
-        token = self.wifi_watcher.add_updated(self._wifi_device_updated)
-        self._remember_event(self.wifi_watcher, "updated", token)
-        token = self.wifi_watcher.add_removed(self._wifi_device_removed)
-        self._remember_event(self.wifi_watcher, "removed", token)
-        token = self.wifi_watcher.add_enumeration_completed(self._wifi_enumeration_completed)
-        self._remember_event(self.wifi_watcher, "enumeration_completed", token)
-        self.wifi_watcher.start()
-        logger.info("On-demand Wi-Fi Direct watcher started")
+        try:
+            selector = WiFiDirectDevice.get_device_selector(WiFiDirectDeviceSelectorType.ASSOCIATION_ENDPOINT)
+            devices = await DeviceInformation.find_all_async(selector, [IE_PROPERTY])
+            found = 0
+            for device in devices:
+                self.wifi_scan_devices[device.id] = device
+                if self._process_wifi_device(device):
+                    found += 1
+            self.on_event({"event": "wifi_direct_scan_complete", "count": found})
+        except Exception as exc:
+            logger.warning("Wi-Fi Direct scan failed: %s", exc)
 
-    def _wifi_device_added(self, _sender, device) -> None:
-        self.wifi_scan_devices[device.id] = device
-        logger.info(
-            "Wi-Fi Direct endpoint discovered id=%s name=%r paired=%s can_pair=%s",
-            device.id, device.name, device.pairing.is_paired, device.pairing.can_pair,
-        )
-        self._process_wifi_device(device)
-
-    def _wifi_device_updated(self, _sender, update) -> None:
-        device = self.wifi_scan_devices.get(update.id)
-        if device is None:
-            return
-        device.update(update)
-        self._process_wifi_device(device)
-
-    def _wifi_device_removed(self, _sender, update) -> None:
-        self.wifi_scan_devices.pop(update.id, None)
-        self.wifi_scan_matches.discard(update.id)
-
-    def _wifi_enumeration_completed(self, _sender, _args) -> None:
-        count = len(self.wifi_scan_matches)
-        self.on_event({"event": "wifi_direct_scan_complete", "count": count})
-        logger.info(
-            "Wi-Fi Direct watcher initial enumeration completed: %d endpoint(s), %d app match(es)",
-            len(self.wifi_scan_devices), count,
-        )
-
-    def _process_wifi_device(self, device) -> None:
+    def _process_wifi_device(self, device) -> bool:
         from winrt.windows.devices.wifidirect import WiFiDirectInformationElement
 
         try:
@@ -958,10 +937,13 @@ class PythonWinRTRadio:
                      "paired": device.pairing.is_paired, "token": peer_token,
                      "port": port, "device_id": device_id, "public_key": public_key}
                 )
+                return True
             else:
                 logger.debug("Wi-Fi Direct endpoint %s did not contain the app information element", device.id)
+                return False
         except Exception:
             logger.exception("Could not inspect Wi-Fi Direct endpoint %s", getattr(device, "id", "unknown"))
+            return False
 
     def connect_wifi_direct(self, device_id: str) -> None:
         if not self.started:
