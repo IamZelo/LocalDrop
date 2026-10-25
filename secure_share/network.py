@@ -24,6 +24,8 @@ from .storage import LocalStore
 
 logger = logging.getLogger("secure_share.network")
 CONNECT_TIMEOUT = 20
+CONNECT_ATTEMPTS = 4
+CONNECT_RETRY_DELAY = 2
 APPROVAL_TIMEOUT = 330
 STREAM_TIMEOUT = 60
 
@@ -210,8 +212,31 @@ class NetworkManager:
                 offer["signature"] = self.identity.sign(canonical(offer))
                 phase = "connect"
                 self.callbacks.status(f"Connecting to file server {peer.host}:{peer.port}...")
-                sock = self._connect(peer, trusted["public_key"] if trusted else expected_public_key,
-                                     local_address=local_address)
+                connect_error = None
+                for attempt in range(1, CONNECT_ATTEMPTS + 1):
+                    try:
+                        self.callbacks.status(
+                            f"Connecting to file server ({attempt}/{CONNECT_ATTEMPTS})..."
+                        )
+                        sock = self._connect(
+                            peer,
+                            trusted["public_key"] if trusted else expected_public_key,
+                            timeout=8,
+                            local_address=local_address,
+                        )
+                        break
+                    except NetworkError as exc:
+                        connect_error = exc
+                        if attempt == CONNECT_ATTEMPTS:
+                            raise
+                        logger.warning(
+                            "Wi-Fi Direct route is not ready; retrying TCP connection in %ss: %s",
+                            CONNECT_RETRY_DELAY,
+                            exc,
+                        )
+                        time.sleep(CONNECT_RETRY_DELAY)
+                if sock is None and connect_error:
+                    raise connect_error
                 phase = "receiver_approval"
                 sock.settimeout(APPROVAL_TIMEOUT)
                 self.callbacks.status("File offer sent. Waiting for the receiver to accept (up to 5 minutes)...")

@@ -38,7 +38,9 @@ class NetworkTransferTests(unittest.TestCase):
                          [network.APPROVAL_TIMEOUT, network.STREAM_TIMEOUT])
         self.assertGreater(network.APPROVAL_TIMEOUT, 300)
         self.manager.callbacks.transfer_finished.assert_called_once_with(True)
-        self.manager._connect.assert_called_once_with(self.peer, "key", local_address="192.168.137.2")
+        self.manager._connect.assert_called_once_with(
+            self.peer, "key", timeout=8, local_address="192.168.137.2"
+        )
         self.assertFalse(self.manager._send_lock.locked())
 
     def test_decline_does_not_send_file_chunks(self):
