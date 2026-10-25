@@ -33,6 +33,15 @@ def _enum_name(value: object) -> str:
     return str(getattr(value, "name", value))
 
 
+def _enum_member(enum_type, name: str):
+    """Resolve enum names across PyWinRT projections that use lower/upper case."""
+    for candidate in (name.lower(), name.upper(), name):
+        value = getattr(enum_type, candidate, None)
+        if value is not None:
+            return value
+    raise ValueError(f"Unsupported {enum_type.__name__} value: {name}")
+
+
 def _exception_event(error_event: str, exc: BaseException, attempt_id: str | None = None) -> dict:
     raw_hresult = getattr(exc, "hresult", getattr(exc, "winerror", None))
     if isinstance(raw_hresult, int):
@@ -114,6 +123,7 @@ class PythonWinRTRadio:
         self.gatt_characteristic = None
         self.metadata = b""
         self.bluetooth_connections: dict[str, object] = {}
+        self.bluetooth_sessions: dict[str, object] = {}
         self.ble_resolving: set[tuple[int, str]] = set()
         self.ble_peers: dict[tuple[int, str], dict] = {}
         self.ble_last_emitted: dict[tuple[int, str], float] = {}
@@ -278,12 +288,13 @@ class PythonWinRTRadio:
                 raise RadioOperationError(
                     "gatt_server_read", "Windows denied access to the incoming Bluetooth metadata read"
                 )
-            # The metadata-serving/receiving side owns the temporary group;
-            # the sender joins it after receiving the metadata response.
-            self._ensure_wifi_direct_started("Bluetooth bootstrap metadata request", prefer_group_owner=True)
             request.respond_with_value(self._buffer(self.metadata))
             self.on_event({"event": "bluetooth_metadata_received"})
-            logger.info("Bluetooth bootstrap metadata returned; Wi-Fi Direct is now available")
+            logger.info("Bluetooth bootstrap metadata returned to the peer")
+            # Respond before starting Wi-Fi Direct so radio reconfiguration cannot
+            # delay the GATT response. The sender's Wi-Fi scan already retries.
+            self._ensure_wifi_direct_started("Bluetooth bootstrap metadata request", prefer_group_owner=True)
+            logger.info("Wi-Fi Direct is now available after the Bluetooth metadata response")
         except Exception as exc:
             logger.exception("Incoming Bluetooth bootstrap metadata read failed")
             self.on_event(_exception_event("bluetooth_metadata_error", exc))
@@ -477,8 +488,15 @@ class PythonWinRTRadio:
     async def _prepare_bluetooth(
         self, device_id: str, address: str, address_type: str, attempt_id: str
     ) -> None:
-        from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothLEDevice
-        from winrt.windows.devices.bluetooth.genericattributeprofile import GattCommunicationStatus
+        from winrt.windows.devices.bluetooth import (
+            BluetoothAddressType,
+            BluetoothCacheMode,
+            BluetoothLEDevice,
+        )
+        from winrt.windows.devices.bluetooth.genericattributeprofile import (
+            GattCommunicationStatus,
+            GattSession,
+        )
 
         started = time.monotonic()
         numeric_address = int(address, 16)
@@ -495,10 +513,30 @@ class PythonWinRTRadio:
                 "address_type": address_type,
             }
         )
-        logger.info("[%s] Opening BluetoothLEDevice from canonical endpoint id on the UI thread", attempt_id)
-        device = await BluetoothLEDevice.from_id_async(device_id)
+        address_type_value = _enum_member(BluetoothAddressType, address_type)
+        logger.info(
+            "[%s] Opening live BluetoothLEDevice address=%s type=%s on the UI thread",
+            attempt_id, address, address_type,
+        )
+        device = await BluetoothLEDevice.from_bluetooth_address_with_bluetooth_address_type_async(
+            numeric_address, address_type_value
+        )
+        if device is None:
+            logger.warning(
+                "[%s] Live-address open returned no device; falling back to canonical endpoint id=%s",
+                attempt_id, device_id,
+            )
+            device = await BluetoothLEDevice.from_id_async(device_id)
         if device is None:
             raise RadioOperationError("device_open", "The Bluetooth device is no longer available")
+        access_status = _enum_name(await device.request_access_async())
+        logger.info("[%s] Bluetooth device access request returned %s", attempt_id, access_status)
+        if access_status != "ALLOWED":
+            raise RadioOperationError(
+                "device_access",
+                f"Windows denied access to the Bluetooth device: {access_status}",
+                status=access_status,
+            )
         if int(device.bluetooth_address) != numeric_address:
             logger.warning(
                 "[%s] BLE address rotated after discovery expected=%s current=%012X; canonical device id remains authoritative",
@@ -528,17 +566,63 @@ class PythonWinRTRadio:
             _enum_name(device.connection_status),
         )
 
+        session = None
+        try:
+            session = await GattSession.from_device_id_async(device.bluetooth_device_id)
+            if session is not None:
+                if session.can_maintain_connection:
+                    session.maintain_connection = True
+                previous_session = self.bluetooth_sessions.get(device_id)
+                if previous_session is not None and previous_session is not session:
+                    previous_session.close()
+                self.bluetooth_sessions[device_id] = session
+                logger.info(
+                    "[%s] GATT session status=%s can_maintain_connection=%s maintain_connection=%s",
+                    attempt_id, _enum_name(session.session_status), session.can_maintain_connection,
+                    session.maintain_connection,
+                )
+        except Exception:
+            # Service discovery can still establish the link when GattSession is
+            # unavailable on a particular Windows/PyWinRT combination.
+            logger.exception("[%s] Could not create a maintained GATT session; continuing", attempt_id)
+
         phase_started = time.monotonic()
-        logger.info("[%s] Discovering uncached Bluetooth bootstrap service", attempt_id)
-        services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
-            CONTROL_SERVICE_UUID, BluetoothCacheMode.UNCACHED
-        )
+        services = None
+        for discovery_attempt in range(1, 4):
+            logger.info(
+                "[%s] Discovering uncached Bluetooth bootstrap service attempt=%d/3 connection=%s",
+                attempt_id, discovery_attempt, _enum_name(device.connection_status),
+            )
+            services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
+                CONTROL_SERVICE_UUID, BluetoothCacheMode.UNCACHED
+            )
+            status = _enum_name(services.status)
+            logger.info(
+                "[%s] GATT service discovery attempt=%d status=%s services=%d connection=%s",
+                attempt_id, discovery_attempt, status, len(services.services or ()),
+                _enum_name(device.connection_status),
+            )
+            if services.status == GattCommunicationStatus.SUCCESS and services.services:
+                break
+            if status != "UNREACHABLE" or discovery_attempt == 3:
+                break
+            delay = 0.75 * discovery_attempt
+            logger.warning(
+                "[%s] GATT peer is temporarily unreachable; keeping the session open and retrying in %.2fs",
+                attempt_id, delay,
+            )
+            await asyncio.sleep(delay)
+        assert services is not None
         if services.status != GattCommunicationStatus.SUCCESS or not services.services:
             status = _enum_name(services.status)
             raise RadioOperationError(
-                "gatt_service_discovery", f"Bluetooth metadata service unavailable: {status}", status=status
+                "gatt_service_discovery",
+                f"Bluetooth metadata service unavailable after 3 attempts: {status}; "
+                f"connection={_enum_name(device.connection_status)}",
+                status=status,
             )
         service = services.services[0]
+        characteristics = None
         try:
             characteristics = await service.get_characteristics_for_uuid_with_cache_mode_async(
                 METADATA_CHARACTERISTIC_UUID, BluetoothCacheMode.UNCACHED
@@ -553,7 +637,7 @@ class PythonWinRTRadio:
             logger.info("[%s] Reading Bluetooth bootstrap metadata without creating an OS bond", attempt_id)
             read = await characteristics.characteristics[0].read_value_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
         finally:
-            for characteristic in (characteristics.characteristics or []):
+            for characteristic in (characteristics.characteristics if characteristics is not None else ()):
                 try:
                     characteristic.close()
                 except Exception:
@@ -909,6 +993,13 @@ class PythonWinRTRadio:
             except Exception:
                 pass
         self.connections.clear()
+        for session in self.bluetooth_sessions.values():
+            try:
+                session.maintain_connection = False
+                session.close()
+            except Exception:
+                pass
+        self.bluetooth_sessions.clear()
         for device in self.bluetooth_connections.values():
             try:
                 device.close()
