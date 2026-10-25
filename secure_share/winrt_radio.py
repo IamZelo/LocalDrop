@@ -854,8 +854,7 @@ class PythonWinRTRadio:
         finally:
             self._wifi_direct_in_progress = False
 
-    async def _pair_for_wifi_direct(self, information, is_go_intent: bool = False):
-        from winrt.windows.devices.enumeration import DeviceInformation
+    def _wifi_connection_parameters(self, is_go_intent: bool = False):
         from winrt.windows.devices.wifidirect import (
             WiFiDirectConfigurationMethod,
             WiFiDirectConnectionParameters,
@@ -866,27 +865,7 @@ class PythonWinRTRadio:
         parameters.preference_ordered_configuration_methods.append(WiFiDirectConfigurationMethod.PUSH_BUTTON)
         parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.INVITATION
         parameters.group_owner_intent = 15 if is_go_intent else 0
-
-        pairing = getattr(information, "pairing", None)
-        if pairing is None:
-            return parameters, information
-
-        if pairing.is_paired:
-            logger.info("Wi-Fi Direct endpoint %s is marked paired; unpairing to clear stale session profile", information.id)
-            try:
-                unpair_res = await pairing.unpair_async()
-                logger.info("Wi-Fi Direct unpairing status: %s", _enum_name(unpair_res.status))
-            except Exception as exc:
-                logger.warning("Wi-Fi Direct unpair exception: %s", exc)
-
-            try:
-                refreshed = await DeviceInformation.create_from_id_async(information.id)
-                if refreshed is not None:
-                    information = refreshed
-            except Exception as exc:
-                logger.warning("Could not refresh DeviceInformation after unpairing: %s", exc)
-
-        return parameters, information
+        return parameters
 
     async def _accept_request(self, request) -> None:
         from winrt.windows.devices.wifidirect import WiFiDirectDevice
@@ -1006,6 +985,10 @@ class PythonWinRTRadio:
             WiFiDirectDevice,
         )
 
+        if self._wifi_direct_in_progress:
+            logger.info("Wi-Fi Direct connection already in progress, skipping duplicate request for %s", device_id)
+            return
+
         self._wifi_direct_in_progress = True
         publisher_stopped = False
         try:
@@ -1021,6 +1004,7 @@ class PythonWinRTRadio:
                         logger.info("Stopping Wi-Fi Direct publisher to connect as client")
                         self.wifi_publisher.stop()
                         publisher_stopped = True
+                        await asyncio.sleep(0.5)
                 except Exception as exc:
                     logger.warning("Could not stop Wi-Fi Direct publisher: %s", exc)
 
@@ -1033,18 +1017,17 @@ class PythonWinRTRadio:
                 "Starting Wi-Fi Direct connection id=%s name=%r paired=%s can_pair=%s",
                 device_id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
-            parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=False)
-            from winrt.windows.devices.wifidirect import WiFiDirectPairingProcedure
-
-            logger.info("Connecting to Wi-Fi Direct endpoint %s (procedure=INVITATION intent=0)", information.id)
-            device = await WiFiDirectDevice.from_id_async(information.id, parameters)
+            # Try direct connection first (connects to running SoftAP in 2-3s)
+            logger.info("Attempting direct FromIdAsync to %s", information.id)
+            device = await WiFiDirectDevice.from_id_async(information.id)
             if device is None:
-                logger.info("FromIdAsync with INVITATION returned None; trying with GROUP_OWNER_NEGOTIATION")
-                parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
-                device = await WiFiDirectDevice.from_id_async(information.id, parameters)
-            if device is None:
-                logger.info("FromIdAsync with parameters returned None; trying without parameters")
+                logger.info("Direct FromIdAsync returned None; retrying in 1s")
+                await asyncio.sleep(1.0)
                 device = await WiFiDirectDevice.from_id_async(information.id)
+            if device is None:
+                logger.info("Direct FromIdAsync retry returned None; trying with connection parameters")
+                parameters = self._wifi_connection_parameters(is_go_intent=False)
+                device = await WiFiDirectDevice.from_id_async(information.id, parameters)
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_connect", "Windows returned no Wi-Fi Direct device for the selected endpoint"

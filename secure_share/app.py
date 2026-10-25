@@ -524,19 +524,49 @@ class MainWindow(QMainWindow):
             self.workflow_active, self.pending_radio_id, event.get("id"),
             event.get("local_address"), event.get("remote_address"),
         )
-        event_id = str(event.get("id") or "").strip().casefold()
-        pending_id = str(self.pending_radio_id or "").strip().casefold()
-        if not self.workflow_active or event_id != pending_id:
-            logger.warning(
-                "Ignoring wifi_direct_connected: workflow_active=%s id_match=%s (pending=%r event=%r)",
-                self.workflow_active, event_id == pending_id, self.pending_radio_id, event.get("id"),
-            )
-            return
         address = event.get("remote_address", "")
         if ":" in address:
             logger.info("Skipping IPv6 endpoint %s; waiting for IPv4", address)
             return  # The file listener is IPv4; wait for the IPv4 endpoint event.
-        radio_peer = self.radio_peers.get(self.pending_radio_id or "", {})
+
+        raw_event_id = str(event.get("id") or "").strip()
+        event_id = raw_event_id.replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
+        pending_id = str(self.pending_radio_id or "").strip().replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
+
+        matching_peer_id = None
+        for r_id in self.radio_peers:
+            clean_r_id = r_id.replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
+            if clean_r_id == event_id:
+                matching_peer_id = r_id
+                break
+
+        if not self.workflow_active or (pending_id and event_id != pending_id):
+            if self.paths and (matching_peer_id or self.radio_peers):
+                target_radio_id = matching_peer_id or (list(self.radio_peers.keys())[0] if len(self.radio_peers) == 1 else None)
+                if target_radio_id:
+                    logger.info(
+                        "Re-activating workflow for Wi-Fi Direct connection to %s (has pending files)",
+                        event.get("name") or target_radio_id,
+                    )
+                    self.workflow_active = True
+                    self.pending_radio_id = target_radio_id
+                else:
+                    logger.warning("Wi-Fi Direct connected with pending files but multiple ambiguous peers: %s", list(self.radio_peers.keys()))
+                    return
+            else:
+                if not self.paths:
+                    logger.info(
+                        "Wi-Fi Direct connected to %s as receiver; waiting for sender file offer",
+                        event.get("name") or event.get("id"),
+                    )
+                else:
+                    logger.warning(
+                        "Ignoring wifi_direct_connected: workflow_active=%s id_match=%s (pending=%r event=%r paths=%d)",
+                        self.workflow_active, event_id == pending_id, self.pending_radio_id, event.get("id"), len(self.paths),
+                    )
+                return
+
+        radio_peer = self.radio_peers.get(self.pending_radio_id or matching_peer_id or "", {})
         try:
             port = int(radio_peer["port"])
             device_id = str(radio_peer["device_id"])
