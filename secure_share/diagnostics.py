@@ -43,7 +43,7 @@ def main() -> int:
             return 1
         try:
             print("Radio started; observing Bluetooth advertisements for 15 seconds...")
-            print("Wi-Fi Direct intentionally remains off until Bluetooth bootstrap metadata is exchanged.")
+            print("Wi-Fi Direct and Bluetooth are active.")
             await asyncio.sleep(15)
             print("RESULT: radio backend remained running")
             return 0

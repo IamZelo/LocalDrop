@@ -14,6 +14,8 @@ import traceback
 import uuid
 from typing import Callable
 
+from .identity import b64, unb64
+
 MAGIC = b"LSS1"
 CUSTOM_OUI = bytes((0xFA, 0xCE, 0x01))
 IE_PROPERTY = "System.Devices.WiFiDirect.InformationElements"
@@ -186,8 +188,15 @@ class PythonWinRTRadio:
         await self._start_gatt_control()
         self._start_bluetooth()
         logger.info("Bluetooth LE GATT advertiser and watcher started")
+        wifi_ready = False
+        try:
+            self._start_wifi_direct()
+            wifi_ready = True
+            logger.info("Wi-Fi Direct publisher and connection listener started")
+        except Exception as exc:
+            logger.warning("Could not start Wi-Fi Direct at launch: %s", exc)
         self.started = True
-        self.on_event({"event": "ready", "bluetooth": True, "wifi_direct": False, "implementation": "python-winrt"})
+        self.on_event({"event": "ready", "bluetooth": True, "wifi_direct": wifi_ready, "implementation": "python-winrt"})
         await self.stop_event.wait()
 
     async def _log_bluetooth_adapter(self) -> None:
@@ -258,7 +267,10 @@ class PythonWinRTRadio:
         advertising = GattServiceProviderAdvertisingParameters()
         advertising.is_connectable = True
         advertising.is_discoverable = True
-        advertising.service_data = self._buffer(_encode_hostname(socket.gethostname()))
+        # Do not attach service_data to GattServiceProviderAdvertisingParameters:
+        # On standard 31-byte legacy Bluetooth LE controllers, 128-bit service data + 128-bit service UUID
+        # exceeds the 31-byte limit, causing Windows to abort advertising with STARTED_WITHOUT_ALL_ADVERTISEMENT_DATA.
+        # Hostnames are reliably discovered from Windows device enumeration (device.name).
         self.gatt_provider = result.service_provider
         self.gatt_characteristic = characteristic_result.characteristic
         read_token = self.gatt_characteristic.add_read_requested(self._metadata_read_requested)
@@ -629,30 +641,43 @@ class PythonWinRTRadio:
 
         phase_started = time.monotonic()
         services = None
-        for discovery_attempt in range(1, 4):
-            logger.info(
-                "[%s] Discovering uncached Bluetooth bootstrap service attempt=%d/3 connection=%s",
-                attempt_id, discovery_attempt, _enum_name(device.connection_status),
-            )
-            services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
-                CONTROL_SERVICE_UUID, BluetoothCacheMode.UNCACHED
-            )
-            status = _enum_name(services.status)
-            logger.info(
-                "[%s] GATT service discovery attempt=%d status=%s services=%d connection=%s",
-                attempt_id, discovery_attempt, status, len(services.services or ()),
-                _enum_name(device.connection_status),
-            )
-            if services.status == GattCommunicationStatus.SUCCESS and services.services:
-                break
-            if status != "UNREACHABLE" or discovery_attempt == 3:
-                break
-            delay = 0.75 * discovery_attempt
-            logger.warning(
-                "[%s] GATT peer is temporarily unreachable; keeping the session open and retrying in %.2fs",
-                attempt_id, delay,
-            )
-            await asyncio.sleep(delay)
+        # Try cached service table first if the device was previously paired or connected
+        if pairing.is_paired:
+            try:
+                cached_services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
+                    CONTROL_SERVICE_UUID, BluetoothCacheMode.CACHED
+                )
+                if cached_services.status == GattCommunicationStatus.SUCCESS and cached_services.services:
+                    logger.info("[%s] Found cached GATT bootstrap service on paired device", attempt_id)
+                    services = cached_services
+            except Exception:
+                pass
+
+        if services is None or services.status != GattCommunicationStatus.SUCCESS or not services.services:
+            for discovery_attempt in range(1, 4):
+                logger.info(
+                    "[%s] Discovering uncached Bluetooth bootstrap service attempt=%d/3 connection=%s",
+                    attempt_id, discovery_attempt, _enum_name(device.connection_status),
+                )
+                services = await device.get_gatt_services_for_uuid_with_cache_mode_async(
+                    CONTROL_SERVICE_UUID, BluetoothCacheMode.UNCACHED
+                )
+                status = _enum_name(services.status)
+                logger.info(
+                    "[%s] GATT service discovery attempt=%d status=%s services=%d connection=%s",
+                    attempt_id, discovery_attempt, status, len(services.services or ()),
+                    _enum_name(device.connection_status),
+                )
+                if services.status == GattCommunicationStatus.SUCCESS and services.services:
+                    break
+                if status != "UNREACHABLE" or discovery_attempt == 3:
+                    break
+                delay = 0.75 * discovery_attempt
+                logger.warning(
+                    "[%s] GATT peer is temporarily unreachable; keeping the session open and retrying in %.2fs",
+                    attempt_id, delay,
+                )
+                await asyncio.sleep(delay)
         assert services is not None
         if services.status != GattCommunicationStatus.SUCCESS or not services.services:
             status = _enum_name(services.status)
@@ -752,14 +777,17 @@ class PythonWinRTRadio:
         self.wifi_publisher = WiFiDirectAdvertisementPublisher()
         advertisement = self.wifi_publisher.advertisement
         advertisement.listen_state_discoverability = WiFiDirectAdvertisementListenStateDiscoverability.INTENSIVE
-        advertisement.is_autonomous_group_owner_enabled = self.wifi_group_owner
+        advertisement.is_autonomous_group_owner_enabled = True
         element = WiFiDirectInformationElement()
         element.oui = self._buffer(CUSTOM_OUI)
         element.oui_type = 1
         identity = self.device_id.encode("utf-8")
         if len(identity) > 64:
             raise ValueError("device identity is too long for Wi-Fi Direct discovery")
-        element.value = self._buffer(MAGIC + self.token + self.port.to_bytes(2, "big") + bytes((len(identity),)) + identity)
+        public_key_raw = unb64(self.public_key) if self.public_key else b""
+        element.value = self._buffer(
+            MAGIC + self.token + self.port.to_bytes(2, "big") + bytes((len(identity),)) + identity + public_key_raw
+        )
         advertisement.information_elements.append(element)
         token = self.wifi_publisher.add_status_changed(
             lambda _sender, args: self.on_event(
@@ -841,8 +869,10 @@ class PythonWinRTRadio:
             request.close()
 
     def scan_wifi_direct(self) -> None:
-        if self.wifi_publisher is None:
+        if not self.started:
             raise RuntimeError("Wi-Fi Direct is locked until Bluetooth bootstrap metadata is exchanged")
+        if self.wifi_publisher is None:
+            self._start_wifi_direct()
         self._schedule(self._scan_wifi_direct())
 
     async def _scan_wifi_direct(self) -> None:
@@ -899,6 +929,9 @@ class PythonWinRTRadio:
 
         try:
             peer_token = None
+            port = 0
+            device_id = ""
+            public_key = ""
             elements = WiFiDirectInformationElement.create_from_device_information(device)
             logger.debug("Inspecting %d information element(s) for Wi-Fi Direct endpoint %s", len(elements), device.id)
             for element in elements:
@@ -907,21 +940,23 @@ class PythonWinRTRadio:
                     peer_token = value[4:12].hex().upper()
                     port = int.from_bytes(value[12:14], "big")
                     identity_length = value[14]
-                    if len(value) != 15 + identity_length:
+                    if len(value) < 15 + identity_length:
                         peer_token = None
                         continue
-                    device_id = value[15:].decode("utf-8", errors="strict")
+                    device_id = value[15:15 + identity_length].decode("utf-8", errors="strict")
+                    public_key_raw = value[15 + identity_length:15 + identity_length + 32]
+                    public_key = b64(public_key_raw) if len(public_key_raw) == 32 else ""
                     break
             if peer_token:
                 self.wifi_scan_matches.add(device.id)
                 logger.info(
-                    "Matched app Wi-Fi Direct endpoint id=%s name=%r token=%s port=%s device_id=%s",
-                    device.id, device.name, peer_token, port, device_id,
+                    "Matched app Wi-Fi Direct endpoint id=%s name=%r token=%s port=%s device_id=%s has_key=%s",
+                    device.id, device.name, peer_token, port, device_id, bool(public_key),
                 )
                 self.on_event(
                     {"event": "wifi_direct_peer", "id": device.id, "name": device.name,
                      "paired": device.pairing.is_paired, "token": peer_token,
-                     "port": port, "device_id": device_id}
+                     "port": port, "device_id": device_id, "public_key": public_key}
                 )
             else:
                 logger.debug("Wi-Fi Direct endpoint %s did not contain the app information element", device.id)
@@ -929,8 +964,10 @@ class PythonWinRTRadio:
             logger.exception("Could not inspect Wi-Fi Direct endpoint %s", getattr(device, "id", "unknown"))
 
     def connect_wifi_direct(self, device_id: str) -> None:
-        if self.wifi_publisher is None:
+        if not self.started:
             raise RuntimeError("Wi-Fi Direct is locked until Bluetooth bootstrap metadata is exchanged")
+        if self.wifi_publisher is None:
+            self._start_wifi_direct()
         self._schedule(self._connect_wifi_direct(device_id))
 
     async def _connect_wifi_direct(self, device_id: str) -> None:

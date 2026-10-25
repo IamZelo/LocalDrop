@@ -157,6 +157,7 @@ class MainWindow(QMainWindow):
         self.ble_expiry_timer.start()
         if self.radio.start():
             self.status.setText("Starting Bluetooth discovery…")
+            self.scan_timer.start()
         else:
             self.status.setText("Bluetooth radio unavailable. Run: python -m secure_share.diagnostics")
 
@@ -279,54 +280,73 @@ class MainWindow(QMainWindow):
         self.pending_peer = None
         self.devices.setEnabled(False)
         self.progress.setValue(0)
-        self.status.setText("Contacting the device over Bluetooth...")
+        self.status.setText("Connecting to the nearby device...")
 
-        # Read short-lived Wi-Fi bootstrap metadata over BLE. Windows Bluetooth
-        # pairing is deliberately not required; durable trust is established
-        # later by the TLS/short-code application protocol.
-        try:
-            peer = self.ble_peers[ble_token]
-            self.radio.prepare_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
-        except (KeyError, RuntimeError) as exc:
-            self.status.setText(f"Bluetooth metadata exchange could not start: {exc}")
-            self.reset_workflow()
-            return
-        QTimer.singleShot(30000, lambda token=ble_token: self._bluetooth_metadata_timed_out(token))
+        # Start Wi-Fi Direct scanning immediately in parallel with Bluetooth bootstrap
+        self.scan_timer.start()
+        self.scan_radios()
+
+        # Connect immediately if a matching Wi-Fi Direct peer was already discovered
+        for radio_id, radio_peer in list(self.radio_peers.items()):
+            self._connect_matching_wifi_peer(radio_id, radio_peer)
+            if self.pending_radio_id:
+                break
+
+        if not self.pending_radio_id:
+            try:
+                peer = self.ble_peers[ble_token]
+                self.radio.prepare_bluetooth(peer["device_id"], peer["address"], peer["address_type"])
+            except (KeyError, RuntimeError) as exc:
+                logger.warning("Bluetooth metadata bootstrap skipped: %s", exc)
+            QTimer.singleShot(30000, lambda token=ble_token: self._bluetooth_metadata_timed_out(token))
 
     def _bluetooth_metadata_timed_out(self, token: str) -> None:
-        if self.workflow_active and self.pending_ble_token == token:
-            logger.error("Bluetooth metadata exchange timed out after 30 seconds for discovery token %s", token)
+        if self.workflow_active and not self.pending_radio_id:
+            logger.warning("Bluetooth metadata exchange timed out for token %s; continuing Wi-Fi Direct search", token)
             self.radio.cancel_bluetooth_preparation()
-            self.status.setText("Bluetooth metadata exchange timed out. See the console diagnostics.")
-            self.reset_workflow()
+            self.status.setText("Bluetooth slow; searching for direct Wi-Fi endpoint…")
+            QTimer.singleShot(15000, lambda t=token: self._wifi_lookup_timed_out(t))
 
     def _wifi_lookup_timed_out(self, token: str) -> None:
-        if self.workflow_active and self.pending_ble_token == token and not self.pending_radio_id:
+        if self.workflow_active and not self.pending_radio_id:
             self.status.setText(
                 "Could not contact that device over Wi-Fi Direct. Keep both apps open and check that Wi-Fi is enabled."
             )
             self.reset_workflow()
 
     def _connect_matching_wifi_peer(self, radio_id: str, peer: dict) -> None:
-        if not self.workflow_active or peer.get("token") != self.pending_ble_token:
+        if not self.workflow_active:
             return
         if self.pending_radio_id:
             return
-        bootstrap = self.ble_peers.get(self.pending_ble_token or "", {})
-        if bootstrap.get("device_id") != peer.get("device_id") or not bootstrap.get("public_key"):
-            self.status.setText("The Bluetooth and Wi-Fi identities do not match. Connection cancelled.")
-            self.reset_workflow()
+
+        target_token = self.pending_ble_token
+        target_peer = self.ble_peers.get(target_token or "", {})
+        target_name = str(target_peer.get("name") or "").strip().casefold()
+        peer_name = str(peer.get("name") or "").strip().casefold()
+
+        token_match = bool(target_token and peer.get("token") == target_token)
+        name_match = bool(target_name and peer_name and target_name == peer_name)
+        id_match = bool(target_peer.get("device_id") and target_peer.get("device_id") == peer.get("device_id"))
+
+        if not (token_match or name_match or id_match):
             return
+
+        public_key = peer.get("public_key") or target_peer.get("public_key") or ""
+        if not public_key:
+            logger.info("Matched Wi-Fi Direct peer %r, waiting for identity key...", peer.get("name"))
+            return
+
         peer = {
             **peer,
-            "name": bootstrap.get("name") or peer.get("name"),
-            "port": bootstrap.get("port") or peer.get("port"),
-            "public_key": bootstrap["public_key"],
+            "name": peer.get("name") or target_peer.get("name") or "Nearby device",
+            "port": peer.get("port") or target_peer.get("port"),
+            "public_key": public_key,
         }
         self.radio_peers[radio_id] = peer
         self.pending_radio_id = radio_id
         self.scan_timer.stop()
-        self.status.setText(f"Creating a direct connection to {peer.get('name') or 'the nearby device'}…")
+        self.status.setText(f"Creating a direct connection to {peer.get('name')}…")
         try:
             self.radio.connect_wifi_direct(radio_id)
             QTimer.singleShot(45000, lambda target=radio_id: self._wifi_connection_timed_out(target))
@@ -453,8 +473,11 @@ class MainWindow(QMainWindow):
             phase = event.get("phase")
             prefix = f"{phase}: " if phase and phase != "unknown" else ""
             self.status.setText(f"Radio error: {prefix}{event.get('message') or event.get('error') or kind}")
-            if self.workflow_active and kind != "bluetooth_discovery_error":
+            if self.workflow_active and kind not in ("bluetooth_discovery_error", "bluetooth_metadata_error"):
                 self.reset_workflow()
+            elif kind == "bluetooth_metadata_error" and self.workflow_active and not self.pending_radio_id:
+                logger.warning("Bluetooth metadata error: %s; continuing Wi-Fi Direct search", event.get("message"))
+                self.status.setText("Searching for direct Wi-Fi endpoint…")
 
     def refresh_nearby_devices(self) -> None:
         selected = self.pending_ble_token
