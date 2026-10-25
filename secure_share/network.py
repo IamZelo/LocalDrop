@@ -101,10 +101,6 @@ class NetworkManager:
             raise NetworkError("Refusing an address that is not local or link-local")
         raw = socket.socket(socket.AF_INET6 if ":" in peer.host else socket.AF_INET, socket.SOCK_STREAM)
         raw.settimeout(timeout)
-        if raw.family == socket.AF_INET:
-            raw.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, 1)
-        else:
-            raw.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_UNICAST_HOPS, 1)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.minimum_version = ssl.TLSVersion.TLSv1_3
         context.check_hostname = False

@@ -517,7 +517,18 @@ class MainWindow(QMainWindow):
             self.refresh_nearby_devices()
 
     def handle_wifi_connected(self, event: dict) -> None:
-        if not self.workflow_active or event.get("id") != self.pending_radio_id:
+        logger.info(
+            "handle_wifi_connected: workflow_active=%s pending_radio_id=%r event_id=%r local=%s remote=%s",
+            self.workflow_active, self.pending_radio_id, event.get("id"),
+            event.get("local_address"), event.get("remote_address"),
+        )
+        event_id = str(event.get("id") or "").strip().casefold()
+        pending_id = str(self.pending_radio_id or "").strip().casefold()
+        if not self.workflow_active or event_id != pending_id:
+            logger.warning(
+                "Ignoring wifi_direct_connected: workflow_active=%s id_match=%s (pending=%r event=%r)",
+                self.workflow_active, event_id == pending_id, self.pending_radio_id, event.get("id"),
+            )
             return
         address = event.get("remote_address", "")
         if ":" in address:
@@ -545,6 +556,7 @@ class MainWindow(QMainWindow):
         if not trusted:
             self.store.trust_peer(device_id, self.pending_peer.display_name, public_key)
         self.status.setText("Sending the file offer; waiting for the receiver to accept…")
+        logger.info("Initiating network file send to %s:%d (peer: %s)", address, port, device_id)
         self.network.send_files(self.pending_peer, list(self.paths))
 
     @Slot(object)

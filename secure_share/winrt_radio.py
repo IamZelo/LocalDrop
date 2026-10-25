@@ -928,13 +928,10 @@ class PythonWinRTRadio:
         try:
             information = request.device_information
             logger.info(
-                "Accepting Wi-Fi Direct endpoint id=%s name=%r paired=%s can_pair=%s",
-                information.id, information.name, information.pairing.is_paired, information.pairing.can_pair,
+                "Accepting incoming Wi-Fi Direct connection request id=%s name=%r",
+                information.id, information.name,
             )
-            parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=True)
-            device = await WiFiDirectDevice.from_id_async(information.id, parameters)
-            if device is None:
-                device = await WiFiDirectDevice.from_id_async(information.id)
+            device = await WiFiDirectDevice.from_id_async(information.id)
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_accept", "Windows returned no Wi-Fi Direct device for the accepted request"
