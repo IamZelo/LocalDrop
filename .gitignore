@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+.dotnet-cli/
+.localappdata-build/
+.appdata-build/
+native/windows/LocalShare.RadioHelper/bin/
+native/windows/LocalShare.RadioHelper/obj/

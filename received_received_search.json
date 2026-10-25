@@ -1,0 +1,1933 @@
+[
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0f5",
+    "id": 1,
+    "name": "The Vellore Kitchen(Green Circle)",
+    "categories": [
+      "South Indian",
+      "Asian",
+      "Diner"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 6,
+    "popularItems": [
+      "Mutton Biryani",
+      "Andhra-style Chilli Chicken",
+      "Tandoori Chicken"
+    ],
+    "cost": "₹300-₹500",
+    "description": "A family-friendly diner offering Indian and Asian dishes. Known for its spacious setting with high ceilings and large windows, providing a serene dining experience.",
+    "feedback": "Praised for its authentic South Indian flavors and inviting ambiance.",
+    "image": "/restaurant1.jpg",
+    "coordinates": [
+      12.931707565258373,
+      79.13624120838269
+    ],
+    "openHours": {
+      "Monday": "6:30 am- 10:30 pm",
+      "Tuesday": "6:30 am- 10:30 pm",
+      "Wednesday": "6:30 am- 10:30 pm",
+      "Thursday": "6:30 am- 10:30 pm",
+      "Friday": "6:30 am- 10:30 pm",
+      "Saturday": "6:30 am- 10:30 pm",
+      "Sunday": "6:30 am- 10:30 pm"
+    },
+    "address": "W4GJ+228 New Bangalore Service Road, No: 1, Near Green Circle, NH 46 Service Rd, Vellore, Tamil Nadu 632004",
+    "phone": "089405 89405"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0f6",
+    "id": 2,
+    "name": "The Vellore Kitchen(Gandhi Nagar)",
+    "categories": [
+      "South Indian",
+      "Diner"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Mutton Biryani",
+      "Andhra-style Chilli Chicken",
+      "Tandoori Chicken"
+    ],
+    "cost": "₹300-₹500",
+    "description": "A south indian diner offering comfort foods and amazing biryani along with renouned kothu parotta with a home like ambience and tranquil experience.",
+    "feedback": "Customers loved the spice packed food with an authentic taste of biryanis.",
+    "image": "/restaurant2.jpg",
+    "coordinates": [
+      12.950467184738637,
+      79.13723277862472
+    ],
+    "openHours": {
+      "Monday": "6:30 am- 10:30 pm",
+      "Tuesday": "6:30 am- 10:30 pm",
+      "Wednesday": "6:30 am- 10:30 pm",
+      "Thursday": "6:30 am- 10:30 pm",
+      "Friday": "6:30 am- 10:30 pm",
+      "Saturday": "6:30 am- 10:30 pm",
+      "Sunday": "6:30 am- 10:30 pm"
+    },
+    "address": "Silk Mill, No: 27/4, 1st East Main Rd, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "070920 23331"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0f7",
+    "id": 3,
+    "name": "Hundreds Heritage",
+    "categories": [
+      "North Indian",
+      "Chinese",
+      "Multi-cuisine"
+    ],
+    "rating": 4.1,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Mutton Biryani in clay pot",
+      "Cottage Cheese Steak",
+      "Panko Fried Chicken"
+    ],
+    "cost": "₹400-₹600",
+    "description": "A multi-cuisine restaurant located in East Gandhinagar, offering North Indian and Chinese delicacies in a nearly 50-year-old structure.",
+    "feedback": "Recognized for its diverse menu and generous portions. The ambiance is described as quirky and vibrant.",
+    "image": "/restaurant3.jpg",
+    "coordinates": [
+      12.950386,
+      79.13910299999999
+    ],
+    "openHours": {
+      "Monday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Tuesday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Wednesday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Thursday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Friday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Saturday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ],
+      "Sunday": [
+        "12-3:30pm",
+        "7:30-10:30pm"
+      ]
+    },
+    "address": "10, 14th East Cross Rd, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "+91 96550 57100"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0f8",
+    "id": 4,
+    "name": "Apna Dhaba",
+    "categories": [
+      "North Indian",
+      "Dhaba"
+    ],
+    "rating": 3.7,
+    "isVeg": false,
+    "distance": 1,
+    "popularItems": [
+      "North Indian Thali",
+      "Butter Chicken",
+      "Paneer Dishes"
+    ],
+    "cost": "₹150-₹250",
+    "description": "A go-to dhaba for authentic North Indian cuisine with generous portions.",
+    "feedback": "Loved for its hearty meals and quick service.",
+    "image": "/restaurant4.jpg",
+    "coordinates": [
+      12.9673327,
+      79.1557669
+    ],
+    "openHours": {
+      "Monday": [
+        "11:45am-10pm"
+      ],
+      "Tuesday": [
+        "11:45am-10pm"
+      ],
+      "Wednesday": [
+        "11:45am-10pm"
+      ],
+      "Thursday": [
+        "11:45am-10pm"
+      ],
+      "Friday": [
+        "11:45am-10pm"
+      ],
+      "Saturday": [
+        "11:45am-10pm"
+      ],
+      "Sunday": [
+        "11:45am-10pm"
+      ]
+    },
+    "address": "Ad sreet, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 99441 17018"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0f9",
+    "id": 5,
+    "name": "Divine Cafe",
+    "categories": [
+      "Cafe",
+      "Continental"
+    ],
+    "rating": 3.8,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Coffee",
+      "Sandwiches",
+      "Pasta"
+    ],
+    "cost": "₹300-₹400",
+    "description": "A cozy café offering continental dishes and beverages, ideal for hangouts and study sessions.",
+    "feedback": "Customers enjoy the quality of food and beverages.",
+    "image": "/restaurant5.jpg",
+    "coordinates": [
+      12.957429655375991,
+      79.14163120109406
+    ],
+    "openHours": {
+      "Monday": [
+        "6am-10:30pm"
+      ],
+      "Tuesday": [
+        "6am-10:30pm"
+      ],
+      "Wednesday": [
+        "6am-10:30pm"
+      ],
+      "Thursday": [
+        "6am-10:30pm"
+      ],
+      "Friday": [
+        "6am-10:30pm"
+      ],
+      "Saturday": [
+        "6am-10:30pm"
+      ],
+      "Sunday": [
+        "6am-10:30pm"
+      ]
+    },
+    "address": "7th, 2nd Cross Rd, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "+91 95662 36009"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0fa",
+    "id": 6,
+    "name": "Treat - All Day Dining",
+    "categories": [
+      "Indian",
+      "Chinese"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 7,
+    "popularItems": [
+      "Gulab Jamun",
+      "Paneer Butter Masala",
+      "Chicken 65"
+    ],
+    "cost": "₹250-₹400",
+    "description": "Located on Officer's Line, offering a mix of Indian and Chinese cuisines in a comfortable setting.",
+    "feedback": "Highly rated for its delicious food and excellent service.",
+    "image": "/restaurant6.jpg",
+    "coordinates": [
+      12.90617080499447,
+      79.1318262156732
+    ],
+    "openHours": {
+      "Monday": "7am-10:30pm",
+      "Tuesday": "7am-10:30pm",
+      "Wednesday": "7am-10:30pm",
+      "Thursday": "7am-10:30pm",
+      "Friday": "7am-10:30pm",
+      "Saturday": "7am-10:30pm",
+      "Sunday": "7am-10:30pm"
+    },
+    "address": "Zip By Spree Hotels, Surabi International 33, Officer's Line, Bishop David Nagar, Kosapet, Vellore, Tamil Nadu 632001",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0fb",
+    "id": 7,
+    "name": "7th Heaven Café",
+    "categories": [
+      "Cafe",
+      "Dessert",
+      "Bakery"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 1.5,
+    "popularItems": [
+      "Tiramisu Cheesecake",
+      "Cupcakes",
+      "Coffee"
+    ],
+    "cost": "₹200",
+    "description": "A dessert café offering cakes, pastries, and beverages. A favorite spot for students.",
+    "feedback": "Known for its delectable desserts and courteous staff.",
+    "image": "/restaurant7.jpg",
+    "coordinates": [
+      12.9695223005163,
+      79.15397962187612
+    ],
+    "openHours": {
+      "Monday": "10am-9:30pm",
+      "Tuesday": "10am-9:30pm",
+      "Wednesday": "10am-9:30pm",
+      "Thursday": "10am-9:30pm",
+      "Friday": "10am-9:30pm",
+      "Saturday": "10am-9:30pm",
+      "Sunday": "10am-9:30pm"
+    },
+    "address": "7th heaven cake shop, opp. AJ Fitness, near VIT All Mart, Vellore, Tamil Nadu 632014",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0fc",
+    "id": 8,
+    "name": "Tara Maa Restaurant",
+    "categories": [
+      "South Indian",
+      "Mess"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 0.5,
+    "popularItems": [
+      "Chicken Dosa",
+      "Set Parotta"
+    ],
+    "cost": "₹70-₹150",
+    "description": "A local mess providing traditional South Indian dishes at budget-friendly prices.",
+    "feedback": "Popular among students for its affordable and tasty meals.",
+    "image": "/restaurant8.jpg",
+    "coordinates": [
+      12.967284669293493,
+      79.15686108046346
+    ],
+    "openHours": {
+      "Monday": "12:30pm-10:30pm",
+      "Tuesday": "12:30pm-10:30pm",
+      "Wednesday": "12:30pm-10:30pm",
+      "Thursday": "12:30pm-10:30pm",
+      "Friday": "12:30pm-10:30pm",
+      "Saturday": "12:30pm-10:30pm",
+      "Sunday": "12:30pm-10:30pm"
+    },
+    "address": "Kangayanellore Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "096556 94838"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0fd",
+    "id": 9,
+    "name": "Salt and Pepper",
+    "categories": [
+      "Indo-Chinese"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Fried Rice",
+      "Manchurian",
+      "Noodles"
+    ],
+    "cost": "₹150-₹250",
+    "description": "An eatery specializing in Indo-Chinese cuisine.",
+    "feedback": "Praised for its flavorful Indo-Chinese dishes and quick service.",
+    "image": "/restaurant9.jpg",
+    "coordinates": [
+      12.96698289492811,
+      79.15984894886402
+    ],
+    "openHours": {
+      "Monday": "8am - 11pm",
+      "Tuesday": "8am - 11pm",
+      "Wednesday": "8am - 11pm",
+      "Thursday": "8am - 11pm",
+      "Friday": "8am - 11pm",
+      "Saturday": "8am - 11pm",
+      "Sunday": "8am - 11pm"
+    },
+    "address": "Vit University Vit Guest House, Vellore, Tamil Nadu 632014",
+    "phone": " 097462 94153"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0fe",
+    "id": 10,
+    "name": "Arabian Majlis",
+    "categories": [
+      "Middle Eastern",
+      "Arabian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 4,
+    "popularItems": [
+      "Mandi",
+      "Chicken Kizhi Parotta"
+    ],
+    "cost": "₹250-₹400",
+    "description": "A restaurant offering Middle Eastern dishes with a traditional setup.",
+    "feedback": "Recognized for its authentic Arabian flavors and generous portions.",
+    "image": "/restaurant10.jpg",
+    "coordinates": [
+      12.966085066991411,
+      79.15626979411861
+    ],
+    "openHours": {
+      "Monday": "12pm - 10pm",
+      "Tuesday": "12pm - 10pm",
+      "Wednesday": "12pm - 10pm",
+      "Thursday": "12pm - 10pm",
+      "Friday": "12pm - 10pm",
+      "Saturday": "12pm - 10pm",
+      "Sunday": "12pm - 10pm"
+    },
+    "address": "X584+8FM, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632006",
+    "phone": "073391 41766"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f0ff",
+    "id": 11,
+    "name": "Punjabi Rasoi",
+    "categories": [
+      "North Indian",
+      "Punjabi"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 1,
+    "popularItems": [
+      "Amritsari Thali",
+      "Chola Bhatura",
+      "Dal Makhani"
+    ],
+    "cost": "₹100-₹200",
+    "description": "A humble restaurant serving traditional Punjabi food and other north eastern cuisines quickly and affordably.",
+    "feedback": "A favorite for its affordable and delicious food.",
+    "image": "/restaurant11.jpg",
+    "coordinates": [
+      12.9677521685024,
+      79.15793927340216
+    ],
+    "openHours": {
+      "Monday": "11am - 10pm",
+      "Tuesday": "11am - 10pm",
+      "Wednesday": "11am - 10pm",
+      "Thursday": "11am - 10pm",
+      "Friday": "11am - 10pm",
+      "Saturday": "11am - 10pm",
+      "Sunday": "11am - 10pm"
+    },
+    "address": "X584+WMV, Kangayanellore Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f100",
+    "id": 12,
+    "name": "Hangout Cafe",
+    "categories": [
+      "Cafe",
+      "Fast Food"
+    ],
+    "rating": 4.4,
+    "isVeg": false,
+    "distance": 4.7,
+    "popularItems": [
+      "Burgers",
+      "Milkshakes",
+      "Fries"
+    ],
+    "cost": "₹100-₹200",
+    "description": "A student-friendly cafe offering fast food and beverages, perfect for quick bites.",
+    "feedback": "Popular among students for its affordable pricing and quick service.",
+    "image": "/restaurant12.jpg",
+    "coordinates": [
+      12.9568279,
+      79.1450667
+    ],
+    "openHours": {
+      "Monday": [
+        "10am-9pm"
+      ],
+      "Tuesday": [
+        "10am-9pm"
+      ],
+      "Wednesday": [
+        "10am-9pm"
+      ],
+      "Thursday": [
+        "10am-9pm"
+      ],
+      "Friday": [
+        "10am-9pm"
+      ],
+      "Saturday": [
+        "10am-9pm"
+      ],
+      "Sunday": [
+        "10am-9pm"
+      ]
+    },
+    "address": "Katpadi, 1, 17th East Cross Rd, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "+91 79041 45035"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f101",
+    "id": 14,
+    "name": "Atti Cafe",
+    "categories": [
+      "Cafe",
+      "Fast Food"
+    ],
+    "rating": 4,
+    "isVeg": false,
+    "distance": 1,
+    "popularItems": [
+      "Cold Coffee",
+      "Wraps",
+      "Fries"
+    ],
+    "cost": "₹150-₹200",
+    "description": "A lively cafe near VIT, offering a variety of snacks and beverages, making it a popular hangout spot.",
+    "feedback": "Known for its vibrant ambiance and student-centric menu.",
+    "image": "/restaurant14.jpg",
+    "coordinates": [
+      12.9674589,
+      79.1574038
+    ],
+    "address": "Tiruvalam Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 80987 22330",
+    "openHours": {
+      "Monday": "Unknown",
+      "Tuesday": "Unknown",
+      "Wednesday": "Unknown",
+      "Thursday": "Unknown",
+      "Friday": "Unknown",
+      "Saturday": "Unknown",
+      "Sunday": "Unknown"
+    }
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f102",
+    "id": 15,
+    "name": "Zan Cafe",
+    "categories": [
+      "Middle Eastern",
+      "Indian Fusion"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 1.2,
+    "popularItems": [
+      "Haleem",
+      "Biryani",
+      "Kebabs"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A compact and budget-friendly eatery offering Middle Eastern and Indian fusion dishes.",
+    "feedback": "Praised for its flavorful dishes and reasonable pricing.",
+    "image": "/restaurant15.jpg",
+    "coordinates": [
+      12.9682183,
+      79.15361349999999
+    ],
+    "openHours": {
+      "Monday": [
+        "10am-10:30pm"
+      ],
+      "Tuesday": [
+        "10am-10:30pm"
+      ],
+      "Wednesday": [
+        "10am-10:30pm"
+      ],
+      "Thursday": [
+        "10am-10:30pm"
+      ],
+      "Friday": [
+        "10am-10:30pm"
+      ],
+      "Saturday": [
+        "10am-10:30pm"
+      ],
+      "Sunday": [
+        "10am-10:30pm"
+      ]
+    },
+    "address": "No.9, Katpadi to Chennai Salai, Taluk, near VIT Road, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 97870 02700"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f103",
+    "id": 16,
+    "name": "Hive Food Street",
+    "categories": [
+      "Food Court",
+      "Multi-cuisine"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Tadka Maggi",
+      "Momos",
+      "Dosa"
+    ],
+    "cost": "₹100-₹300",
+    "description": "Vellore's largest food street featuring over 20 outlets, offering a plethora of cuisines to cater to diverse palates.",
+    "feedback": "Celebrated for its diverse food options and vibrant atmosphere.",
+    "image": "/restaurant16.jpg",
+    "coordinates": [
+      12.966540061099641,
+      79.16175557954747
+    ],
+    "openHours": {
+      "Monday": "10am-11pm",
+      "Tuesday": "10am-11pm",
+      "Wednesday": "10am-11pm",
+      "Thursday": "10am-11pm",
+      "Friday": "10am-11pm",
+      "Saturday": "10am-11pm",
+      "Sunday": "10am-11pm"
+    },
+    "address": "386/1, 3rd Rd, Vaibhav Nagar, Katpadi, Brahmapuram, Vellore, Tamil Nadu 632014",
+    "phone": "088258 50286"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f104",
+    "id": 17,
+    "name": "Zaitoon",
+    "categories": [
+      "Multi-cuisine",
+      "Arabian",
+      "Fine Dining"
+    ],
+    "rating": 4.8,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Chicken Alfaham Dajaj",
+      "Boneless BBQ fish",
+      "Butter Naan"
+    ],
+    "cost": "₹350-₹500",
+    "description": "One of the best food places in Vellore known for being exquisite and having a standard of it's own.",
+    "feedback": "A usual spot for treats between friends and is loved for serving consistently good food",
+    "image": "/restaurant17.jpg",
+    "coordinates": [
+      12.968308946439944,
+      79.15045962557613
+    ],
+    "openHours": {
+      "Monday": [
+        "11am-11:30pm"
+      ],
+      "Tuesday": [
+        "11am-11:30pm"
+      ],
+      "Wednesday": [
+        "11am-11:30pm"
+      ],
+      "Thursday": [
+        "11am-11:30pm"
+      ],
+      "Friday": [
+        "11am-11:30pm"
+      ],
+      "Saturday": [
+        "11am-11:30pm"
+      ],
+      "Sunday": [
+        "11am-11:30pm"
+      ]
+    },
+    "address": "1st floor, Selvam Square, Tiruvalam Rd, Selvam Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 90871 11211"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f105",
+    "id": 18,
+    "name": "Frozen Bottle",
+    "categories": [
+      "Dessert",
+      "Beverages"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 0.2,
+    "popularItems": [
+      "Milkshakes",
+      "Waffles",
+      "Ice creams"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A dessert parlor specializing in thick shakes and sweet treats, perfect for satisfying sugar cravings.",
+    "feedback": "Loved for its rich and creamy desserts.",
+    "image": "/restaurant18.jpg",
+    "coordinates": [
+      12.968723671220122,
+      79.15576307877865
+    ],
+    "openHours": {
+      "Monday": "10am - 2am",
+      "Tuesday": "10am - 2am",
+      "Wednesday": "10am - 2am",
+      "Thursday": "10am - 2am",
+      "Friday": "10am - 2am",
+      "Saturday": "10am - 2am",
+      "Sunday": "10am - 2am"
+    },
+    "address": "Ward 8, Corporation I, Shop No 586/17, 1st Floor, Surya Complex, New, Road, opposite to VIT Road, Katpadi, Thiruvalam, Vellore, Tamil Nadu 632014",
+    "phone": "097910 52114"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f106",
+    "id": 19,
+    "name": "Burger King",
+    "categories": [
+      "Fast Food",
+      "Burgers"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3.1,
+    "popularItems": [
+      "Whopper",
+      "Fries",
+      "Soft Drinks"
+    ],
+    "cost": "₹200-₹300",
+    "description": "An international fast-food chain offering a range of burgers and sides.",
+    "feedback": "Known for its consistent taste and quick service.",
+    "image": "/restaurant19.jpg",
+    "coordinates": [
+      12.96262752425733,
+      79.1389728384133
+    ],
+    "openHours": {
+      "Monday": "9am - 4am",
+      "Tuesday": "9am - 4am",
+      "Wednesday": "9am - 4am",
+      "Thursday": "9am - 4am",
+      "Friday": "9am - 4am",
+      "Saturday": "9am - 4am",
+      "Sunday": "9am - 4am"
+    },
+    "address": "Ground Floor, No 372/6, 2nd Main Rd, near Aascars Cinemas, Balaji Nagar, Bharathi Nagar, Dharapadavedu, Vellore, Tamil Nadu 632007",
+    "phone": " 098807 99774"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f107",
+    "id": 20,
+    "name": "Pizza Hut",
+    "categories": [
+      "Pizza",
+      "Fast Food"
+    ],
+    "rating": 4.9,
+    "isVeg": false,
+    "distance": 0.8,
+    "popularItems": [
+      "Pan Pizzas",
+      "Garlic Bread",
+      "Pasta"
+    ],
+    "cost": "₹250-₹400",
+    "description": "A global pizza chain offering a range of Italian-American dishes, suitable for group outings.",
+    "feedback": "Appreciated for its variety of pizzas and dine-in experience.",
+    "image": "/restaurant20.jpg",
+    "coordinates": [
+      12.96870010127719,
+      79.1503224525619
+    ],
+    "openHours": {
+      "Monday": [
+        "11am-11pm"
+      ],
+      "Tuesday": [
+        "11am-11pm"
+      ],
+      "Wednesday": [
+        "11am-11pm"
+      ],
+      "Thursday": [
+        "11am-11pm"
+      ],
+      "Friday": [
+        "11am-11pm"
+      ],
+      "Saturday": [
+        "11am-11pm"
+      ],
+      "Sunday": [
+        "11am-11pm"
+      ]
+    },
+    "address": "No 71 to 73, Ground Floor, Tiruvalam Rd, near Selvam Cinemas, Selvam Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 86556 89179"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f108",
+    "id": 21,
+    "name": "KFC",
+    "categories": [
+      "Fast Food",
+      "Fried Chicken"
+    ],
+    "rating": 4.3,
+    "isVeg": false,
+    "distance": 4,
+    "popularItems": [
+      "Fried Chicken",
+      "Zinger Burger",
+      "Popcorn Chicken"
+    ],
+    "cost": "₹200-₹350",
+    "description": "An international fast-food chain specializing in fried chicken and related dishes.",
+    "feedback": "Popular for its crispy chicken and quick meals.",
+    "image": "/restaurant21.jpg",
+    "coordinates": [
+      12.959398297593784,
+      79.13789648603964
+    ],
+    "openHours": {
+      "Monday": [
+        "11am-11pm"
+      ],
+      "Tuesday": [
+        "11am-11pm"
+      ],
+      "Wednesday": [
+        "11am-11pm"
+      ],
+      "Thursday": [
+        "11am-11pm"
+      ],
+      "Friday": [
+        "11am-11pm"
+      ],
+      "Saturday": [
+        "11am-11pm"
+      ],
+      "Sunday": [
+        "11am-11pm"
+      ]
+    },
+    "address": "No 99/A, Katpadi - Vellore Rd, Suthanthira Ponvizha Nagar, Katpadi, Vellore, Tamil Nadu 632006",
+    "phone": "+91 80 4595 3038"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f109",
+    "id": 23,
+    "name": "McDonald's",
+    "categories": [
+      "Fast Food",
+      "Burgers"
+    ],
+    "rating": 4.1,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Big Mac",
+      "McFlurry",
+      "French Fries"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A global fast food chain offering a variety of burgers, sides, and beverages.",
+    "feedback": "Known for its consistent menu and fast service.",
+    "image": "/restaurant23.jpg",
+    "coordinates": [
+      12.968461911884662,
+      79.14947122557611
+    ],
+    "openHours": {
+      "Monday": [
+        "10am-11pm"
+      ],
+      "Tuesday": [
+        "10am-11pm"
+      ],
+      "Wednesday": [
+        "10am-11pm"
+      ],
+      "Thursday": [
+        "10am-11pm"
+      ],
+      "Friday": [
+        "10am-11pm"
+      ],
+      "Saturday": [
+        "10am-11pm"
+      ],
+      "Sunday": [
+        "10am-11pm"
+      ]
+    },
+    "address": "McDonald's,Ashokan plaza, VIT Rd, Solai Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "+91 70213 59449"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10a",
+    "id": 24,
+    "name": "Behrouz Biryani",
+    "categories": [
+      "Biryani",
+      "North Indian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 6,
+    "popularItems": [
+      "Dum Biryani",
+      "Kebabs",
+      "Raita"
+    ],
+    "cost": "₹300-₹500",
+    "description": "A delivery-focused brand specializing in premium biryanis and accompaniments.",
+    "feedback": "Praised for its rich flavors and generous portions.",
+    "image": "/restaurant24.jpg",
+    "coordinates": [
+      12.96761934820043,
+      79.1533686151159
+    ],
+    "openHours": {
+      "Monday": "11am - 10pm",
+      "Tuesday": "11am - 10pm",
+      "Wednesday": "11am - 10pm",
+      "Thursday": "11am - 10pm",
+      "Friday": "11am - 10pm",
+      "Saturday": "11am - 10pm",
+      "Sunday": "11am - 10pm"
+    },
+    "address": "No. 10, Thiruvalam, Rd, Andal Nagar, Katpadi, Vellore, Tamil Nadu 632006",
+    "phone": "077000 50050"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10b",
+    "id": 25,
+    "name": "NIC Ice Creams",
+    "categories": [
+      "Dessert",
+      "Ice Cream"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Natural Fruit Ice Creams",
+      "Sundaes"
+    ],
+    "cost": "₹150-₹250",
+    "description": "An ice cream parlor offering a range of natural and preservative-free flavors.",
+    "feedback": "Loved for its natural flavors and creamy texture.",
+    "image": "/restaurant25.jpg",
+    "coordinates": [
+      12.959931957652689,
+      79.14456114681994
+    ],
+    "openHours": {
+      "Monday": "12pm- 11pm",
+      "Tuesday": "12pm- 11pm",
+      "Wednesday": "12pm- 11pm",
+      "Thursday": "12pm- 11pm",
+      "Friday": "12pm- 11pm",
+      "Saturday": "12pm- 11pm",
+      "Sunday": "12pm- 11pm"
+    },
+    "address": "Shop 571, Vellaikalmedu, Kaghaiyanal Road, Opposite VIT, Gandhi Nagar, Vellore.",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10c",
+    "id": 26,
+    "name": "Sweet Truth",
+    "categories": [
+      "Dessert",
+      "Bakery"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Cakes",
+      "Brownies",
+      "Desserts"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A dessert brand offering a variety of cakes and sweets, available for online ordering.",
+    "feedback": "Known for its delectable desserts and timely delivery.",
+    "image": "/restaurant26.jpg",
+    "coordinates": [
+      12.968013715264409,
+      79.15592813783891
+    ],
+    "openHours": {
+      "Monday": "9am - 12am",
+      "Tuesday": "9am - 12am",
+      "Wednesday": "9am - 12am",
+      "Thursday": "9am - 12am",
+      "Friday": "9am - 12am",
+      "Saturday": "9am - 12am",
+      "Sunday": "9am - 12am"
+    },
+    "address": "No.10, Andal Nagar, Katpadi Thiruvalam, Road, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "077100 55553"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10d",
+    "id": 27,
+    "name": "The Good Bowl",
+    "categories": [
+      "Bowl Meals",
+      "Fusion"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Rice Bowls",
+      "Pasta",
+      "Biryani"
+    ],
+    "cost": "₹250-₹350",
+    "description": "A delivery kitchen offering a range of bowl meals combining Indian and international flavors.",
+    "feedback": "Appreciated for its wholesome meals and variety.",
+    "image": "/restaurant27.jpg",
+    "coordinates": [
+      12.96799707821068,
+      79.1560585298811
+    ],
+    "openHours": {
+      "Monday": "Unknown",
+      "Tuesday": "Unknown",
+      "Wednesday": "Unknown",
+      "Thursday": "Unknown",
+      "Friday": "Unknown",
+      "Saturday": "Unknown",
+      "Sunday": "Unknown"
+    },
+    "address": "X583+RC8, Phase 3 St, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "088281 00666"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10e",
+    "id": 28,
+    "name": "Olio - The Wood Fired Pizzeria",
+    "categories": [
+      "Pizza",
+      "Italian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "Wood-Fired Pizzas",
+      "Pasta",
+      "Garlic Bread"
+    ],
+    "cost": "₹300-₹500",
+    "description": "A pizzeria offering wood-fired pizzas with a variety of toppings, providing a rustic Italian dining experience.",
+    "feedback": "Praised for its authentic pizzas and cozy ambiance.",
+    "image": "/restaurant28.jpg",
+    "coordinates": [
+      12.968314463961438,
+      79.15695564579683
+    ],
+    "openHours": {
+      "Monday": "Unknown",
+      "Tuesday": "Unknown",
+      "Wednesday": "Unknown",
+      "Thursday": "Unknown",
+      "Friday": "Unknown",
+      "Saturday": "Unknown",
+      "Sunday": "Unknown"
+    },
+    "address": "Ground Floor, 49, VIT Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "099649 17784"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f10f",
+    "id": 29,
+    "name": "Ibaco Ice Creams",
+    "categories": [
+      "Dessert",
+      "Ice Cream"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 5,
+    "popularItems": [
+      "ice Cream Sundaes",
+      "Milkshakes"
+    ],
+    "cost": "₹100-₹200",
+    "description": "An ice cream outlet offering a wide range of sundaes and custom-flavored shakes.",
+    "feedback": "Loved by students for its rich, flavorful treats at decent prices.",
+    "image": "/restaurant29.jpg",
+    "coordinates": [
+      12.902241064000794,
+      79.13166590922715
+    ],
+    "openHours": {
+      "Monday": "11am - 11pm",
+      "Tuesday": "11am - 11pm",
+      "Wednesday": "11am - 11pm",
+      "Thursday": "11am - 11pm",
+      "Friday": "11am - 11pm",
+      "Saturday": "11am - 11pm",
+      "Sunday": "11am - 11pm"
+    },
+    "address": "24, Officer's Line, opposite ICICI Bank, Krishna Nagar, Veerasamy Nagar, Vellore, Tamil Nadu 632001",
+    "phone": "080 4759 0132"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f110",
+    "id": 30,
+    "name": "Hotel Saravana Bhavan",
+    "categories": [
+      "South Indian",
+      "Vegetarian"
+    ],
+    "rating": 4.5,
+    "isVeg": true,
+    "distance": 7,
+    "popularItems": [
+      "Mini Tiffin",
+      "Masala Dosa",
+      "Filter Coffee"
+    ],
+    "cost": "₹150-₹250",
+    "description": "Part of the international Saravana Bhavan chain, offering a wide range of South Indian vegetarian dishes.",
+    "feedback": "Renowned for its standardized taste and quality across branches.",
+    "image": "/restaurant30.jpg",
+    "coordinates": [
+      12.938584304960203,
+      79.14623566145043
+    ],
+    "openHours": {
+      "Monday": "7am - 11pm",
+      "Tuesday": "7am - 11pm",
+      "Wednesday": "7am - 11pm",
+      "Thursday": "7am - 11pm",
+      "Friday": "7am - 11pm",
+      "Saturday": "7am - 11pm",
+      "Sunday": "7am - 11pm"
+    },
+    "address": "Katpadi - Vellore Rd, opp. New Bus Stand, Samuel Nagar, Thottapalayam, Vellore, Tamil Nadu 632004",
+    "phone": "077089 67755"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f111",
+    "id": 31,
+    "name": "Hotel Aryaas",
+    "categories": [
+      "South Indian",
+      "Vegetarian"
+    ],
+    "rating": 4.1,
+    "isVeg": true,
+    "distance": 6.5,
+    "popularItems": [
+      "Idli",
+      "Vada",
+      "Pongal"
+    ],
+    "cost": "₹150-₹250",
+    "description": "A vegetarian restaurant specializing in South Indian breakfast and meals.",
+    "feedback": "Praised for its hygienic environment and consistent taste.",
+    "image": "/restaurant31.jpg",
+    "coordinates": [
+      12.9853556,
+      79.1350428
+    ],
+    "openHours": {
+      "Monday": [
+        "6am-10:30pm"
+      ],
+      "Tuesday": [
+        "6am-10:30pm"
+      ],
+      "Wednesday": [
+        "6am-10:30pm"
+      ],
+      "Thursday": [
+        "6am-10:30pm"
+      ],
+      "Friday": [
+        "6am-10:30pm"
+      ],
+      "Saturday": [
+        "6am-10:30pm"
+      ],
+      "Sunday": [
+        "6am-10:30pm"
+      ]
+    },
+    "address": "9, Vellore - Chittoor Rd, near Sai Baba Temple, Chenguttai, Katpadi, Vellore, Tamil Nadu 632007",
+    "phone": "+91 88075 62997"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f112",
+    "id": 32,
+    "name": "Gingee Restaurant",
+    "categories": [
+      "South Indian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 6,
+    "popularItems": [
+      "South Indian Thali",
+      "Dosa Varieties",
+      "Filter Coffee"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A restaurant offering a traditional South Indian dining experience with a focus on quality and authenticity.",
+    "feedback": "Known for its authentic South Indian flavors and prompt service.",
+    "image": "/restaurant32.jpg",
+    "coordinates": [
+      12.932311995020692,
+      79.13836933875805
+    ],
+    "openHours": {
+      "Monday": "6am - 11:30pm",
+      "Tuesday": "6am - 11:30pm",
+      "Wednesday": "6am - 11:30pm",
+      "Thursday": "6am - 11:30pm",
+      "Friday": "6am - 11:30pm",
+      "Saturday": "6am - 11:30pm",
+      "Sunday": "6am - 11:30pm"
+    },
+    "address": "N0, Old Bus stand, 44, Mandi St, Balaji Nagar, Vellore, Tamil Nadu 632004",
+    "phone": "094433 61708"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f113",
+    "id": 33,
+    "name": "Darling Namma Veedu",
+    "categories": [
+      "South Indian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 7,
+    "popularItems": [
+      "South Indian Thali",
+      "Dosa Varieties"
+    ],
+    "cost": "₹250-₹350",
+    "description": "A restaurant offering traditional South Indian cuisine in a homely setting.",
+    "feedback": "Mixed reviews; some patrons appreciate the traditional flavors, others cite inconsistent service.",
+    "image": "/restaurant33.jpg",
+    "coordinates": [
+      12.931699341212983,
+      79.13770560838266
+    ],
+    "openHours": {
+      "Monday": "7am - 10pm",
+      "Tuesday": "7am - 10pm",
+      "Wednesday": "7am - 10pm",
+      "Thursday": "7am - 10pm",
+      "Friday": "7am - 10pm",
+      "Saturday": "7am - 10pm",
+      "Sunday": "7am - 10pm"
+    },
+    "address": "12, New Katpadi Road, Green Cir, Vellore, Tamil Nadu 632004",
+    "phone": "098403 08888"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f114",
+    "id": 34,
+    "name": "Cafe California",
+    "categories": [
+      "Cafe",
+      "Fast Food"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 0.1,
+    "popularItems": [
+      "Pizza",
+      "Fast Food",
+      "Shakes",
+      "Beverages"
+    ],
+    "cost": "₹100",
+    "description": "A vegetarian-only, delivery-focused cafe located near VIT's main gate.",
+    "feedback": "Offers a variety of fast food options near the VIT gate; popular for quick bites.",
+    "image": "/restaurant34.jpg",
+    "coordinates": [
+      12.96865952977433,
+      79.15760604522157
+    ],
+    "openHours": {
+      "Monday": "8am - 10pm",
+      "Tuesday": "8am - 10pm",
+      "Wednesday": "8am - 10pm",
+      "Thursday": "8am - 10pm",
+      "Friday": "8am - 10pm",
+      "Saturday": "8am - 10pm",
+      "Sunday": "8am - 10pm"
+    },
+    "address": "587/2A, Tiruvalam Rd, opp. 1A Gate VIT, near DTDC courier, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f115",
+    "id": 35,
+    "name": "Pastel Poetry",
+    "categories": [
+      "Indo-Italian",
+      "Fusion",
+      "Fine Dining"
+    ],
+    "rating": 4.7,
+    "isVeg": false,
+    "distance": 5.2,
+    "popularItems": [
+      "Mangalore Ghee Roasted Chicken",
+      "Tiramisu",
+      "Paneer Katafi"
+    ],
+    "cost": "₹300-₹400",
+    "description": "Sophisticated Indo‑Italian fusion (starters, pastas, broths, desserts).Best for special occasions, dinners, or if you're craving creative fusion fare near VIT",
+    "feedback": "Highly appreciated for its creative Indo-Italian fusion menu, elegant presentation, and cozy atmosphere.",
+    "image": "/restaurant35.jpg",
+    "coordinates": [
+      12.9556429,
+      79.13703439999999
+    ],
+    "openHours": {
+      "Monday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Tuesday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Wednesday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Thursday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Friday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Saturday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ],
+      "Sunday": [
+        "7:30-10am",
+        "12:30-3:15pm",
+        "7-10:15pm"
+      ]
+    },
+    "address": "60/1, Vellore - Chittoor Rd, Suthanthira Ponvizha Nagar, Venkatraman Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "+91 70944 81810"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f116",
+    "id": 36,
+    "name": "Subway",
+    "categories": [
+      "Healthy",
+      "Fast Food"
+    ],
+    "rating": 4.2,
+    "isVeg": false,
+    "distance": 4.8,
+    "popularItems": [
+      "Wraps",
+      "Rolls",
+      "Salads"
+    ],
+    "cost": "₹200-250",
+    "description": "A globally recognized sandwich chain offering customizable subs, wraps, salads, and healthy meal options.",
+    "feedback": "Customers appreciate the fresh ingredients, customizable menu, and healthier alternatives.",
+    "image": "/restaurant36.jpg",
+    "coordinates": [
+      12.9568292,
+      79.1368818
+    ],
+    "openHours": {
+      "Monday": [
+        "8am-1am"
+      ],
+      "Tuesday": [
+        "8am-1am"
+      ],
+      "Wednesday": [
+        "8am-1am"
+      ],
+      "Thursday": [
+        "8am-1am"
+      ],
+      "Friday": [
+        "8am-1am"
+      ],
+      "Saturday": [
+        "8am-1am"
+      ],
+      "Sunday": [
+        "8am-1am"
+      ]
+    },
+    "address": "No 66/5, to, Vellore - Chittoor Rd, next to Vasan ENT Clinic, Katpadi, Vellore, Tamil Nadu 632006",
+    "phone": "+91 73037 16864"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f117",
+    "id": 37,
+    "name": "Tom's Diner",
+    "categories": [
+      "American",
+      "Cafe",
+      "Diner"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 0.2,
+    "popularItems": [
+      "Cheese Cake",
+      "Pastas",
+      "Fries",
+      "Burgers"
+    ],
+    "cost": "₹300 per person (approx.)",
+    "description": "A cozy American-style diner right opposite VIT offering hearty comfort food.",
+    "feedback": "Loved for its comforting American-style menu, generous portions, and cozy atmosphere near campus.",
+    "image": "/restaurant37.jpg",
+    "coordinates": [
+      12.96813977849908,
+      79.15684545502435
+    ],
+    "openHours": {
+      "Monday": "10:30am - 10:30pm",
+      "Tuesday": "10:30am - 10:30pm",
+      "Wednesday": "10:30am - 10:30pm",
+      "Thursday": "10:30am - 10:30pm",
+      "Friday": "10:30am - 10:30pm",
+      "Saturday": "10:30am - 10:30pm",
+      "Sunday": "10:30am - 10:30pm"
+    },
+    "address": "Phase 3 St, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "095858 52229"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f118",
+    "id": 38,
+    "name": "Quickie",
+    "categories": [
+      "Fast Food",
+      "Quick Bites"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 1.5,
+    "popularItems": [
+      "Sandwiches",
+      "Wraps",
+      "Quick Bites"
+    ],
+    "cost": "₹100 per person (approx.)",
+    "description": "A casual, delivery-oriented spot serving quick and affordable bites.",
+    "feedback": "Popular among students for its affordable prices and quick preparation.",
+    "image": "",
+    "coordinates": [
+      12.967593522716204,
+      79.15708690844029
+    ],
+    "openHours": {
+      "Monday": "10am-9pm",
+      "Tuesday": "10am-9pm",
+      "Wednesday": "10am-9pm",
+      "Thursday": "10am-9pm",
+      "Friday": "10am-9pm",
+      "Saturday": "10am-9pm",
+      "Sunday": "10am-9pm"
+    },
+    "address": "No16, Vaibhav Nagar Phase 1 Rd, Goldan Nagar, Vaibhav Nagar, Katpadi, Vellore, Brahmapuram, Tamil Nadu 632014",
+    "phone": "099629 37500"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f119",
+    "id": 39,
+    "name": "Andhra Spice Restaurant",
+    "categories": [
+      "Andhra",
+      "South Indian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Andhra Meals",
+      "Spicy Chicken Curry",
+      "Biryanis"
+    ],
+    "cost": "₹200-₹300",
+    "description": "A homely Andhra mess serving authentic spicy curries and traditional meals.",
+    "feedback": "Popular for its authentic Andhra flavors, spicy curries, and affordable meal options.",
+    "image": "/restaurant39.jpg",
+    "coordinates": [
+      12.968360714935041,
+      79.15307158962224
+    ],
+    "openHours": {
+      "Monday": "11am - 10pm",
+      "Tuesday": "11am - 10pm",
+      "Wednesday": "11am - 10pm",
+      "Thursday": "11am - 10pm",
+      "Friday": "11am - 10pm",
+      "Saturday": "11am - 10pm",
+      "Sunday": "11am - 10pm"
+    },
+    "address": "VIT Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "081222 89998"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11a",
+    "id": 40,
+    "name": "Heaven's Gate",
+    "categories": [
+      "Fine Dining",
+      "Multi-cuisine"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 6.7,
+    "popularItems": [
+      "Assorted Breads",
+      "Sea food",
+      "Desertss"
+    ],
+    "cost": "₹1000+",
+    "description": "A luxurious dining experience by Park inn Radisson.",
+    "feedback": "Guests praise the premium dining experience, elegant ambiance, and wide selection of cuisines.",
+    "image": "/restaurant40.jpg",
+    "coordinates": [
+      12.933905387426806,
+      79.14048961191062
+    ],
+    "openHours": {
+      "Monday": "7am-10:30pm",
+      "Tuesday": "7am-10:30pm",
+      "Wednesday": "7am-10:30pm",
+      "Thursday": "7am-10:30pm",
+      "Friday": "7am-10:30pm",
+      "Saturday": "7am-10:30pm",
+      "Sunday": "7am-10:30pm"
+    },
+    "address": " TS No-188, Katpadi Rd, near Green Circle, Palathoram, Thottapalayam, Vellore, Tamil Nadu 632004",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11b",
+    "id": 41,
+    "name": "Chickins",
+    "categories": [
+      "Fast Food",
+      "Arabian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Fried Chicken",
+      "Shawarma",
+      "Burgers"
+    ],
+    "cost": "₹200 per person",
+    "description": "Known for fried chicken and shawarma, a hit for late-night cravings near campus.",
+    "feedback": "A favorite among students for crispy fried chicken, shawarma, and quick late-night meals.",
+    "image": "/restaurant41.jpg",
+    "coordinates": [
+      12.96930431945787,
+      79.15319632185418
+    ],
+    "openHours": {
+      "Monday": "11am - 11pm",
+      "Tuesday": "11am - 11pm",
+      "Wednesday": "11am - 11pm",
+      "Thursday": "11am - 11pm",
+      "Friday": "11am - 11pm",
+      "Saturday": "11am - 11pm",
+      "Sunday": "11am - 11pm"
+    },
+    "address": "Plot No. 151, VIT Main Road, Selvam Nagar, Old Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": " 0416 224 8182"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11c",
+    "id": 42,
+    "name": "Belgian Waffles",
+    "categories": [
+      "Dessert",
+      "Waffles"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Nutella Waffle",
+      "Brownie Waffle",
+      "Classic Maple"
+    ],
+    "cost": "₹150-₹250",
+    "description": "A dessert chain serving crisp waffles stuffed with sweet indulgent fillings.",
+    "feedback": "Known for its freshly made waffles, indulgent toppings, and consistently satisfying desserts.",
+    "image": "/restaurant42.jpg",
+    "coordinates": [
+      12.951240548933932,
+      79.14161682837418
+    ],
+    "openHours": {
+      "Monday": "10am-11pm",
+      "Tuesday": "10am-11pm",
+      "Wednesday": "10am-11pm",
+      "Thursday": "10am-11pm",
+      "Friday": "10am-11pm",
+      "Saturday": "10am-11pm",
+      "Sunday": "10am-11pm"
+    },
+    "address": "No.21, Silk mill, bus stop, near Archanaas Hotel, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "084284 33777"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11d",
+    "id": 43,
+    "name": "Al Sultan Restaurant & Grills",
+    "categories": [
+      "Middle Eastern",
+      "Arabian"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Shawarma",
+      "Grilled Chicken",
+      "Kebabs"
+    ],
+    "cost": "₹200-₹350",
+    "description": "A Middle Eastern-inspired spot famous for shawarma and grilled meats.",
+    "feedback": "Praised for its flavorful shawarmas, grilled specialties, and generous portions.",
+    "image": "/restaurant43.jpg",
+    "coordinates": [
+      12.91386706688079,
+      79.13300339488956
+    ],
+    "openHours": {
+      "Monday": "11:30am - 11:30pm",
+      "Tuesday": "11:30am - 11:30pm",
+      "Wednesday": "11:30am - 11:30pm",
+      "Thursday": "11:30am - 11:30pm",
+      "Friday": "11:30am - 11:30pm",
+      "Saturday": "11:30am - 11:30pm",
+      "Sunday": "11:30am - 11:30pm"
+    },
+    "address": "No.28, AKS Complex, Arni Rd, near CMC eye hospital, Kosapet, Vellore, Tamil Nadu 632001",
+    "phone": "073395 12905"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11e",
+    "id": 44,
+    "name": "Creamstone",
+    "categories": [
+      "Dessert",
+      "Ice Cream"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Ice Cream Creations",
+      "Brownie Fudge",
+      "Cold Stone Mixes"
+    ],
+    "cost": "₹200-₹400",
+    "description": "A trendy ice cream parlor where desserts are hand-mixed on a frozen stone.",
+    "feedback": "Loved for its customizable ice cream creations and rich dessert combinations.",
+    "image": "/restaurant44.jpg",
+    "coordinates": [
+      12.950503960446639,
+      79.13909823912068
+    ],
+    "openHours": {
+      "Monday": "9am-11:30pm",
+      "Tuesday": "9am-11:30pm",
+      "Wednesday": "9am-11:30pm",
+      "Thursday": "9am-11:30pm",
+      "Friday": "9am-11:30pm",
+      "Saturday": "9am-11:30pm",
+      "Sunday": "9am-11:30pm"
+    },
+    "address": " Silk Mill, Bus Stop, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "090803 24474"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f11f",
+    "id": 45,
+    "name": "Chai Galli",
+    "categories": [
+      "Cafe",
+      "Beverages"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 2,
+    "popularItems": [
+      "Masala Chai",
+      "Snacks",
+      "Iced Teas"
+    ],
+    "cost": "₹100-₹200",
+    "description": "A cozy chai café with a wide range of teas and light snacks.",
+    "feedback": "A popular hangout spot known for its variety of teas, snacks, and relaxed ambiance.",
+    "image": "/restaurant45.jpg",
+    "coordinates": [
+      12.9508011265112,
+      79.13930867775427
+    ],
+    "openHours": {
+      "Monday": "Unknown",
+      "Tuesday": "Unknown",
+      "Wednesday": "Unknown",
+      "Thursday": "Unknown",
+      "Friday": "Unknown",
+      "Saturday": "Unknown",
+      "Sunday": "Unknown"
+    },
+    "address": "Not found",
+    "phone": "Not found"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f120",
+    "id": 46,
+    "name": "Zufruita",
+    "categories": [
+      "Continental",
+      "Fine Dining"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Continental Platters",
+      "Steak",
+      "Mocktails"
+    ],
+    "cost": "₹400-₹600",
+    "description": "A chic dine-in restaurant offering continental delicacies and a stylish ambience.",
+    "feedback": "Appreciated for its elegant atmosphere, continental dishes, and quality dining experience.",
+    "image": "/restaurant46.jpg",
+    "coordinates": [
+      12.926570463004513,
+      79.1407808172594
+    ],
+    "openHours": {
+      "Monday": "12:30pm-10:30pm",
+      "Tuesday": "12:30pm-10:30pm",
+      "Wednesday": "12:30pm-10:30pm",
+      "Thursday": "12:30pm-10:30pm",
+      "Friday": "2pm-10:30pm",
+      "Saturday": "12:30pm-11pm",
+      "Sunday": "12:30pm-10:30pm"
+    },
+    "address": "41, Arcot Rd, Kagithapatarai, Vellore, Tamil Nadu 632012",
+    "phone": "097906 07351"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f121",
+    "id": 47,
+    "name": "Hart Lounge",
+    "categories": [
+      "Multi-cuisine",
+      "North Indian"
+    ],
+    "rating": 4.2,
+    "isVeg": false,
+    "distance": 4,
+    "popularItems": [
+      "Biryani",
+      "Grilled Chicken",
+      "Tandoor Items"
+    ],
+    "cost": "₹300-₹500",
+    "description": "Known for its spacious seating and multicuisine menu.",
+    "feedback": "Guests enjoy its spacious seating, lively atmosphere, and diverse multicuisine offerings.",
+    "image": "/restaurant47.jpg",
+    "coordinates": [
+      12.9674464,
+      79.1574598
+    ],
+    "openHours": {
+      "Monday": [
+        "12-11pm"
+      ],
+      "Tuesday": [
+        "12-11pm"
+      ],
+      "Wednesday": [
+        "12-11pm"
+      ],
+      "Thursday": [
+        "12-11pm"
+      ],
+      "Friday": [
+        "12-11pm"
+      ],
+      "Saturday": [
+        "12-11pm"
+      ],
+      "Sunday": [
+        "12-11pm"
+      ]
+    },
+    "address": "No.268, Katpadi, Chennai Salai, VIT Main Road, Vellore, Tamil Nadu 632014",
+    "phone": "+91 96002 94979"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f122",
+    "id": 48,
+    "name": "Kunafa House",
+    "categories": [
+      "Dessert",
+      "Middle Eastern"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Kunafa",
+      "Baklava",
+      "Middle Eastern Desserts"
+    ],
+    "cost": "₹200-₹400",
+    "description": "A dessert house specializing in authentic Middle Eastern sweets.",
+    "feedback": "Well known for authentic Middle Eastern desserts and freshly prepared kunafa.",
+    "image": "/restaurant48.jpg",
+    "coordinates": [
+      12.967213903200667,
+      79.16427414595537
+    ],
+    "openHours": {
+      "Monday": "12pm-11pm",
+      "Tuesday": "12pm-11pm",
+      "Wednesday": "12pm-11pm",
+      "Thursday": "12pm-11pm",
+      "Friday": "12pm-11pm",
+      "Saturday": "12pm-11pm",
+      "Sunday": "12pm-11pm"
+    },
+    "address": "Hive Food Street, VIT Rd, Vaibhav Nagar, Katpadi, Vellore, Tamil Nadu 632014",
+    "phone": "none"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f123",
+    "id": 49,
+    "name": "Giannis",
+    "categories": [
+      "Italian",
+      "Cafe"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 3,
+    "popularItems": [
+      "Ice Cream Sundaes",
+      "Gelato",
+      "Sorbets"
+    ],
+    "cost": "₹300-₹500",
+    "description": "A popular, highly-rated ice cream and dessert parlor.",
+    "feedback": "Praised for its comforting cozy setting, and quality treats.",
+    "image": "/restaurant49.jpg",
+    "coordinates": [
+      12.950931602313396,
+      79.14175546980391
+    ],
+    "openHours": {
+      "Monday": "11am - 11pm",
+      "Tuesday": "11am - 11pm",
+      "Wednesday": "11am - 11pm",
+      "Thursday": "11am - 11pm",
+      "Friday": "11am - 11pm",
+      "Saturday": "11am - 11pm",
+      "Sunday": "11am - 11pm"
+    },
+    "address": "14/2A, 14th East Cross Rd, Suthanthira Ponvizha Nagar, Gandhi Nagar, Vellore, Tamil Nadu 632006",
+    "phone": "095850 50596"
+  },
+  {
+    "_id": "6a5fa9bc9a74cb3bad17f124",
+    "id": 50,
+    "name": "ITC",
+    "categories": [
+      "Fine Dining",
+      "Luxury"
+    ],
+    "rating": 4.5,
+    "isVeg": false,
+    "distance": 6,
+    "popularItems": [
+      "Fine Dining Meals",
+      "Indian Curries",
+      "Gourmet Dishes"
+    ],
+    "cost": "₹1000+",
+    "description": "A luxurious dining experience at the ITC property in Vellore.",
+    "feedback": "Recognized for its premium hospitality, refined dining experience, and excellent service.",
+    "image": "/restaurant50.jpg",
+    "coordinates": [
+      12.958161075354123,
+      79.1415958357316
+    ],
+    "openHours": {
+      "Monday": "11am - 10:30pm",
+      "Tuesday": "11am - 10:30pm",
+      "Wednesday": "11am - 10:30pm",
+      "Thursday": "11am - 10:30pm",
+      "Friday": "11am - 10:30pm",
+      "Saturday": "11am - 10:30pm",
+      "Sunday": "11am - 10:30pm"
+    },
+    "address": "No 31/32 A, Auxulium College Roundtana. Gandhinagar, 7th East Main Rd, Vellore, Tamil Nadu 632006",
+    "phone": "0416 220 7777"
+  }
+]
