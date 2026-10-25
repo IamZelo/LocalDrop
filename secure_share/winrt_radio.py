@@ -264,10 +264,6 @@ class PythonWinRTRadio:
             self._wifi_direct_in_progress = False
 
     async def _pair_for_wifi_direct(self, information, is_go_intent: bool = False):
-        from winrt.windows.devices.enumeration import (
-            DevicePairingKinds,
-            DevicePairingProtectionLevel,
-        )
         from winrt.windows.devices.wifidirect import (
             WiFiDirectConfigurationMethod,
             WiFiDirectConnectionParameters,
@@ -276,47 +272,9 @@ class PythonWinRTRadio:
 
         parameters = WiFiDirectConnectionParameters()
         parameters.preference_ordered_configuration_methods.append(WiFiDirectConfigurationMethod.PUSH_BUTTON)
-        parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
+        # Use INVITATION procedure by default for connecting to an Autonomous Group Owner (SoftAP)
+        parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.INVITATION
         parameters.group_owner_intent = 15 if is_go_intent else 0
-
-        pairing = getattr(information, "pairing", None)
-        if pairing is None:
-            return parameters, information
-
-        if pairing and pairing.can_pair and not pairing.is_paired:
-            kinds = WiFiDirectConnectionParameters.get_device_pairing_kinds(WiFiDirectConfigurationMethod.PUSH_BUTTON)
-            custom = pairing.custom
-
-            def pairing_requested(_sender, args) -> None:
-                kind_name = _enum_name(args.pairing_kind)
-                logger.info("Wi-Fi Direct pairing ceremony requested: %s", kind_name)
-                self.on_event({"event": "wifi_direct_pairing_ceremony", "kind": kind_name})
-                if args.pairing_kind == DevicePairingKinds.CONFIRM_ONLY:
-                    args.accept()
-
-            event_token = custom.add_pairing_requested(pairing_requested)
-            try:
-                logger.info(
-                    "Calling custom pair_with_protection_level_and_settings_async for Wi-Fi Direct (intent=%d)",
-                    parameters.group_owner_intent,
-                )
-                result = await custom.pair_with_protection_level_and_settings_async(
-                    kinds, DevicePairingProtectionLevel.DEFAULT, parameters
-                )
-                status_name = _enum_name(result.status)
-                logger.info("Wi-Fi Direct pairing completed with status=%s", status_name)
-                if status_name not in ("PAIRED", "ALREADY_PAIRED"):
-                    self.on_event({"event": "wifi_direct_pairing_warning", "status": status_name})
-            except Exception as exc:
-                logger.warning("Wi-Fi Direct custom pairing exception: %s; continuing to FromIdAsync", exc)
-            finally:
-                try:
-                    custom.remove_pairing_requested(event_token)
-                except Exception:
-                    pass
-        elif pairing and not pairing.can_pair:
-            logger.warning("Wi-Fi Direct endpoint reports can_pair=False; continuing to FromIdAsync")
-
         return parameters, information
 
     async def _accept_request(self, request) -> None:
@@ -370,9 +328,16 @@ class PythonWinRTRadio:
                 parameters.preference_ordered_configuration_methods.append(
                     WiFiDirectConfigurationMethod.PUSH_BUTTON
                 )
-                parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
+                parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.INVITATION
                 parameters.group_owner_intent = 15
-                logger.info("Direct accept returned None; retrying with connection parameters")
+                logger.info("Direct accept returned None; retrying with INVITATION parameters (intent=15)")
+                for device_id in device_ids:
+                    device = await from_id(device_id, parameters)
+                    if device is not None:
+                        break
+            if device is None:
+                parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
+                logger.info("INVITATION accept returned None; retrying with GROUP_OWNER_NEGOTIATION parameters")
                 for device_id in device_ids:
                     device = await from_id(device_id, parameters)
                     if device is not None:
@@ -531,34 +496,60 @@ class PythonWinRTRadio:
                 "Starting Wi-Fi Direct connection id=%s name=%r paired=%s can_pair=%s",
                 device_id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
-            if information.pairing.is_paired:
-                logger.info("Clearing stale Windows Wi-Fi Direct pairing profile before outgoing connection")
+            parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=False)
+            from winrt.windows.devices.wifidirect import WiFiDirectPairingProcedure
+
+            # 1. Preferred path: connect via INVITATION parameters (for connecting to an Autonomous Group Owner)
+            logger.info("Opening Wi-Fi Direct endpoint via INVITATION parameters (intent=0)")
+            try:
+                device = await asyncio.wait_for(
+                    WiFiDirectDevice.from_id_async(information.id, parameters), 20
+                )
+            except TimeoutError:
+                logger.warning("Wi-Fi Direct FromIdAsync with INVITATION timed out")
+                device = None
+
+            # 2. Try with GROUP_OWNER_NEGOTIATION parameters
+            if device is None:
+                logger.info("INVITATION returned None; retrying with GROUP_OWNER_NEGOTIATION parameters")
+                parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.GROUP_OWNER_NEGOTIATION
+                try:
+                    device = await asyncio.wait_for(
+                        WiFiDirectDevice.from_id_async(information.id, parameters), 20
+                    )
+                except TimeoutError:
+                    logger.warning("Wi-Fi Direct FromIdAsync with GROUP_OWNER_NEGOTIATION timed out")
+                    device = None
+
+            # 3. Direct FromIdAsync without parameters
+            if device is None:
+                logger.info("Parameters returned None; retrying direct FromIdAsync without parameters")
+                try:
+                    device = await asyncio.wait_for(
+                        WiFiDirectDevice.from_id_async(information.id), 15
+                    )
+                except TimeoutError:
+                    logger.warning("Direct FromIdAsync timed out")
+                    device = None
+
+            # 4. If endpoint was marked paired and failed, clear stale profile and retry
+            if device is None and getattr(information, "pairing", None) and information.pairing.is_paired:
+                logger.info("Connection failed on paired endpoint; clearing stale profile and retrying")
                 try:
                     result = await asyncio.wait_for(information.pairing.unpair_async(), 10)
                     logger.info("Wi-Fi Direct stale-profile cleanup status=%s", _enum_name(result.status))
                     refreshed = await DeviceInformation.create_from_id_async(information.id)
                     if refreshed is not None:
-                        information = refreshed
-                except Exception as exc:
-                    logger.warning("Could not clear stale Wi-Fi Direct pairing profile: %s", exc)
-            parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=False)
-            # A previously paired Windows endpoint already has its negotiation
-            # profile. Starting another PushButton ceremony first can make
-            # FromIdAsync return None on some Windows 11 adapters. Try the
-            # direct endpoint before applying explicit parameters.
-            logger.info("Opening Wi-Fi Direct endpoint directly before pairing parameters")
-            device = await WiFiDirectDevice.from_id_async(information.id)
-            if device is None:
-                logger.warning("Direct FromIdAsync returned None; retrying with PushButton parameters")
-                device = await WiFiDirectDevice.from_id_async(information.id, parameters)
-            if device is None:
-                await asyncio.sleep(1.0)
-                refreshed = await DeviceInformation.create_from_id_async(information.id)
-                if refreshed is not None:
-                    logger.info("Retrying Wi-Fi Direct endpoint after fresh DeviceInformation lookup")
-                    device = await WiFiDirectDevice.from_id_async(refreshed.id)
-                    if device is None:
-                        device = await WiFiDirectDevice.from_id_async(refreshed.id, parameters)
+                        parameters.preferred_pairing_procedure = WiFiDirectPairingProcedure.INVITATION
+                        try:
+                            device = await asyncio.wait_for(
+                                WiFiDirectDevice.from_id_async(refreshed.id, parameters), 20
+                            )
+                        except TimeoutError:
+                            device = None
+                except Exception as unpair_err:
+                    logger.warning("Unpair retry failed: %s", unpair_err)
+
             if device is None:
                 raise RadioOperationError(
                     "wifi_direct_connect", "Windows returned no Wi-Fi Direct device for the selected endpoint"
