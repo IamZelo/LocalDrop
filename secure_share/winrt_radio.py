@@ -344,9 +344,24 @@ class PythonWinRTRadio:
                 return
             rssi = args.raw_signal_strength_in_dbm
             name = advertisement.local_name or None
-            for section in advertisement.get_sections_by_type(
-                BluetoothLEAdvertisementDataTypes.SERVICE_DATA_128_BIT_UUIDS
-            ):
+            service_data_type = getattr(
+                BluetoothLEAdvertisementDataTypes,
+                "service_data128_bit_uuids",
+                None,
+            )
+            if service_data_type is None:
+                # Compatibility with projections that expose enum-like names.
+                service_data_type = getattr(
+                    BluetoothLEAdvertisementDataTypes,
+                    "SERVICE_DATA_128_BIT_UUIDS",
+                    None,
+                )
+            sections = (
+                advertisement.get_sections_by_type(service_data_type)
+                if service_data_type is not None
+                else ()
+            )
+            for section in sections:
                 data = self._bytes(section.data)
                 if len(data) >= 16 and uuid.UUID(bytes_le=data[:16]) == CONTROL_SERVICE_UUID:
                     name = _decode_hostname(data[16:]) or name
@@ -382,8 +397,8 @@ class PythonWinRTRadio:
             }
             assert self.loop
             self.loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(
-                    self._resolve_ble_peer(key, address_type_value, discovered)
+                lambda k=key, at=address_type_value, d=discovered: asyncio.create_task(
+                    self._resolve_ble_peer(k, at, d)
                 )
             )
         except Exception:
@@ -603,6 +618,11 @@ class PythonWinRTRadio:
             logger.info("[%s] Reading encryption-required Bluetooth metadata", attempt_id)
             read = await characteristics.characteristics[0].read_value_with_cache_mode_async(BluetoothCacheMode.UNCACHED)
         finally:
+            for characteristic in (characteristics.characteristics or []):
+                try:
+                    characteristic.close()
+                except Exception:
+                    pass
             service.close()
         if read.status != GattCommunicationStatus.SUCCESS:
             status = _enum_name(read.status)

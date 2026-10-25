@@ -92,7 +92,7 @@ class HelperNativeRadio:
     def connect_wifi_direct(self, device_id: str) -> None:
         self.command("connect_wifi_direct", id=device_id)
 
-    def pair_bluetooth(self, address: str, expected_token: str) -> None:
+    def pair_bluetooth(self, device_id: str, address: str, address_type: str) -> None:
         raise RuntimeError("Bluetooth metadata pairing requires the Python WinRT backend")
 
     def close(self) -> None:

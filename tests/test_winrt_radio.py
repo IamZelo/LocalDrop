@@ -1,3 +1,4 @@
+import sys
 import unittest
 
 from secure_share.winrt_radio import (
@@ -10,6 +11,7 @@ from secure_share.winrt_radio import (
 )
 
 
+@unittest.skipUnless(sys.platform == "win32", "WinRT tests require Windows")
 class WinRTRadioTests(unittest.TestCase):
     def test_common_windows_hostname_fits_ble_payload(self):
         encoded = _encode_hostname("DESKTOP-CS6DRQK")

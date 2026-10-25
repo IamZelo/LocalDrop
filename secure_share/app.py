@@ -378,6 +378,7 @@ class MainWindow(QMainWindow):
             if cached:
                 self._connect_matching_wifi_peer(*cached)
             else:
+                self.scan_timer.start()
                 self.scan_radios()
             QTimer.singleShot(30000, lambda token=wifi_token: self._wifi_lookup_timed_out(token))
             self.refresh_nearby_devices()
@@ -437,6 +438,7 @@ class MainWindow(QMainWindow):
             return
         address = event.get("remote_address", "")
         if ":" in address:
+            logger.info("Skipping IPv6 endpoint %s; waiting for IPv4", address)
             return  # The file listener is IPv4; wait for the IPv4 endpoint event.
         radio_peer = self.radio_peers.get(self.pending_radio_id or "", {})
         try:
