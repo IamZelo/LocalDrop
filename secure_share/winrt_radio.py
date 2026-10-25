@@ -498,6 +498,16 @@ class PythonWinRTRadio:
                 "Starting Wi-Fi Direct connection id=%s name=%r paired=%s can_pair=%s",
                 device_id, information.name, information.pairing.is_paired, information.pairing.can_pair,
             )
+            if information.pairing.is_paired:
+                logger.info("Clearing stale Windows Wi-Fi Direct pairing profile before outgoing connection")
+                try:
+                    result = await asyncio.wait_for(information.pairing.unpair_async(), 10)
+                    logger.info("Wi-Fi Direct stale-profile cleanup status=%s", _enum_name(result.status))
+                    refreshed = await DeviceInformation.create_from_id_async(information.id)
+                    if refreshed is not None:
+                        information = refreshed
+                except Exception as exc:
+                    logger.warning("Could not clear stale Wi-Fi Direct pairing profile: %s", exc)
             parameters, information = await self._pair_for_wifi_direct(information, is_go_intent=False)
             # A previously paired Windows endpoint already has its negotiation
             # profile. Starting another PushButton ceremony first can make
