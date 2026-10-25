@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
             public_key=self.identity.public_b64,
         )
         self.scan_timer = QTimer(self)
-        self.scan_timer.setInterval(4000)
+        self.scan_timer.setInterval(12000)
         self.scan_timer.timeout.connect(self.scan_radios)
         self.ble_expiry_timer = QTimer(self)
         self.ble_expiry_timer.setInterval(5000)
@@ -464,6 +464,8 @@ class MainWindow(QMainWindow):
         elif kind == "wifi_direct_connection_request":
             # Establish the transport silently. The signed file offer below is
             # the receiver's single user-facing Accept/Decline decision.
+            self.scan_timer.stop()
+            self.scan_pending = False
             event["accepted"] = True
             event["_decision"].set()
             self.status.setText("Nearby sender found. Preparing the secure file offer…")
