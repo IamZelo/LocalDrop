@@ -291,11 +291,19 @@ class NetworkManager:
     def _receive_files(self, sock, offer: dict) -> None:
         signature = offer.pop("signature", "")
         sender = offer.get("sender", {})
-        trusted = self.store.peer(sender.get("device_id", ""))
-        if not trusted or trusted["blocked"] or trusted["public_key"] != sender.get("public_key"):
-            send_control(sock, {"type": "decision", "accepted": False, "reason": "Device is not paired"})
+        device_id = str(sender.get("device_id") or "")
+        sender_name = str(sender.get("name") or "Nearby device")
+        sender_public_key = str(sender.get("public_key") or "")
+        if not device_id or not sender_public_key:
+            send_control(sock, {"type": "decision", "accepted": False, "reason": "Invalid sender identity"})
             return
-        verify(trusted["public_key"], signature, canonical(offer))
+        trusted = self.store.peer(device_id)
+        if trusted and (trusted["blocked"] or trusted["public_key"] != sender_public_key):
+            send_control(sock, {"type": "decision", "accepted": False, "reason": "Device identity changed"})
+            return
+        # A first transfer is trust-on-accept: prove ownership of the public key
+        # in the signed offer, then store it only if the receiver accepts.
+        verify(trusted["public_key"] if trusted else sender_public_key, signature, canonical(offer))
         if abs(int(time.time()) - int(offer.get("time", 0))) > 300:
             raise NetworkError("Stale transfer offer")
         try:
@@ -303,11 +311,21 @@ class NetworkManager:
         except (ValueError, TypeError):
             raise NetworkError("Invalid transfer identifier")
         offer["files"] = validate_manifest(offer.get("files"))
-        folder = self.callbacks.accept_transfer(trusted, offer["files"])
+        offered_by = trusted or {
+            "device_id": device_id,
+            "name": sender_name,
+            "public_key": sender_public_key,
+            "blocked": False,
+        }
+        folder = self.callbacks.accept_transfer(offered_by, offer["files"])
         if not folder:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Transfer declined"})
             return
         destination_dir = Path(folder)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        if not trusted:
+            self.store.trust_peer(device_id, sender_name, sender_public_key)
+            trusted = self.store.peer(device_id)
         required = sum(int(item["size"]) for item in offer["files"])
         if required > __import__("shutil").disk_usage(destination_dir).free:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Insufficient disk space"})
@@ -350,7 +368,7 @@ class NetworkManager:
             raise NetworkError("Missing transfer terminator")
         send_control(sock, {"type": "result", "status": "complete"})
         self.store.record_transfer(offer["transfer_id"], sender["device_id"], "received", {"files": offer["files"]}, "complete")
-        self.callbacks.status(f"Received {len(completed)} file(s) from {trusted['name']}")
+        self.callbacks.status(f"Received {len(completed)} file(s) from {sender_name}")
         self.callbacks.progress(offer["transfer_id"], 100)
 
     def close(self) -> None:

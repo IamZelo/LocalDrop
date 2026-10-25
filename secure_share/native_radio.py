@@ -153,7 +153,9 @@ class UnavailableRadio:
 class NativeRadio:
     """Single Windows radio implementation backed by in-process PyWinRT."""
 
-    def __init__(self, device_id: str, port: int, on_event: Callable[[dict], None]):
+    def __init__(
+        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = ""
+    ):
         self.on_event = on_event
         self.implementation = "unavailable"
         if sys.platform != "win32":
@@ -171,7 +173,7 @@ class NativeRadio:
                 logger.error(reason)
                 self.backend = UnavailableRadio(reason)
                 return
-            self.backend = PythonWinRTRadio(device_id, port, on_event)
+            self.backend = PythonWinRTRadio(device_id, port, on_event, public_key=public_key)
             self.implementation = "python-winrt"
             logger.info("Selected radio backend: Python WinRT (single backend; no helper fallback)")
         except Exception as exc:

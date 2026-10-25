@@ -108,8 +108,11 @@ def missing_modules() -> list[str]:
 class PythonWinRTRadio:
     """In-process Windows BLE discovery and Wi-Fi Direct control via PyWinRT."""
 
-    def __init__(self, device_id: str, port: int, on_event: Callable[[dict], None]):
+    def __init__(
+        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = ""
+    ):
         self.device_id = device_id
+        self.public_key = public_key
         self.on_event = on_event
         self.port = port
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -229,6 +232,7 @@ class PythonWinRTRadio:
                 "version": 1,
                 "name": socket.gethostname(),
                 "device_id": self.device_id,
+                "public_key": self.public_key,
                 "port": self.port,
                 "wifi_token": self.token.hex().upper(),
             },
@@ -697,7 +701,7 @@ class PythonWinRTRadio:
                 raise ValueError("Invalid Wi-Fi correlation token")
             if int(metadata["port"]) not in range(1, 65536):
                 raise ValueError("Invalid transfer port")
-            if not str(metadata["device_id"]) or not str(metadata["name"]):
+            if not str(metadata["device_id"]) or not str(metadata["name"]) or not str(metadata["public_key"]):
                 raise ValueError("Incomplete identity")
         except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
             raise RadioOperationError("gatt_metadata_validation", f"Invalid Bluetooth metadata: {exc}") from exc
@@ -717,6 +721,7 @@ class PythonWinRTRadio:
                 "token": token,
                 "name": str(metadata["name"]),
                 "device_id": str(metadata["device_id"]),
+                "public_key": str(metadata["public_key"]),
                 "port": int(metadata["port"]),
             }
         )

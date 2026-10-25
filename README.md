@@ -8,13 +8,13 @@ A backendless desktop file-sharing application for Windows, macOS, and Linux. It
 - mDNS discovery on the local link
 - TLS 1.3 transport
 - Ed25519 device identities and certificate pinning
-- SPAKE2 one-time-code pairing
-- Explicit incoming-transfer approval and destination selection
+- Signed first-transfer trust with certificate pinning
+- One incoming-transfer approval, saved directly to Downloads
 - Streaming transfers with SHA-256 verification and bounded memory use
 - Encrypted local trusted-device and recent-transfer data
 - Direct-address and one-hop restrictions that prevent routed internet transfers
 
-Native Wi-Fi Direct group creation is available through the optional Windows helper below and is always initiated visibly by the user. Linux and Apple require different native adapters; until those are added, their fallback remains an existing LAN or manually created hotspot.
+Native Wi-Fi Direct group creation is handled in-process on Windows after Bluetooth bootstrap. Linux and Apple require different native adapters; until those are added, their fallback remains an existing LAN or manually created hotspot.
 
 ## Native Bluetooth and Wi-Fi Direct on Windows
 
@@ -34,9 +34,9 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-The UI presents one Bluetooth-derived nearby-device list. Drop files, select a computer, and approve the incoming Wi-Fi Direct connection on the receiver. No Windows Bluetooth pairing is required. The app's one-time-code identity check remains the end-to-end security layer for first-time devices.
+The UI presents one Bluetooth-derived nearby-device list. Drop files and select a computer; the Wi-Fi Direct transport is created automatically. The receiver sees one file offer with filenames and sizes. Accepting it stores the sender identity and saves the verified files to Downloads. No Windows Bluetooth pairing is required.
 
-Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. The GATT bootstrap response supplies the local transfer port, rotating Wi-Fi correlation token, and app identity needed to locate the peer. It never contains file names, file contents, credentials, or private keys.
+Bluetooth discovery broadcasts only a shortened hostname and the app service UUID. The GATT bootstrap response supplies the local transfer port, rotating Wi-Fi correlation token, app identity, and public key needed to locate and authenticate the peer. It never contains file names, file contents, credentials, or private keys.
 
 The runtime uses one radio path: in-process Python WinRT. The older source under `native/windows` is retained for reference but is not selected as a fallback.
 
@@ -65,15 +65,15 @@ Allow the application through the local firewall when prompted. On Windows with 
 
 1. Drop or add one or more files.
 2. Click one device in the single **Nearby devices** list. Only devices whose rotating token was observed over Bluetooth are enabled.
-3. Windows creates the Wi-Fi Direct link. First-time devices complete the short-code identity check.
-4. The receiver sees the verified filenames and sizes and chooses **Accept** or **Decline**.
-5. File bytes are streamed only after acceptance.
+3. Windows creates the Wi-Fi Direct link without an application prompt.
+4. The receiver sees the signed filenames and sizes and chooses **Accept** or **Deny**.
+5. File bytes are streamed only after acceptance and saved to Downloads.
 
 An existing LAN/hotspot remains available as the local transport fallback.
 
 ## Security notes
 
-- Pair only when you can see both computers and verify which machine displays the code.
-- A paired identity change is rejected; use **Forget** before intentionally pairing a reinstalled device.
+- Approve a first transfer only when you recognize the nearby computer and expected files.
+- A trusted identity change is rejected; use **Forget** before intentionally trusting a reinstalled device.
 - If an OS credential store is unavailable, the app warns that its secrets are protected only by local file permissions.
 - Incomplete files use a `.part` suffix and are deleted after a failed integrity check.

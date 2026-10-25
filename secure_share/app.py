@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from qasync import QEventLoop
 
 from .discovery import DiscoveredPeer, Discovery
-from .identity import load_or_create_identity
+from .identity import load_or_create_identity, unb64
 from .native_radio import NativeRadio
 from .network import InteractionCallbacks, NetworkManager
 from .protocol import CODE_ALPHABET
@@ -142,7 +142,12 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_signals()
 
-        self.radio = NativeRadio(self.identity.device_id, self.network.port, self.bridge.radio_event.emit)
+        self.radio = NativeRadio(
+            self.identity.device_id,
+            self.network.port,
+            self.bridge.radio_event.emit,
+            public_key=self.identity.public_b64,
+        )
         self.scan_timer = QTimer(self)
         self.scan_timer.setInterval(4000)
         self.scan_timer.timeout.connect(self.scan_radios)
@@ -307,9 +312,21 @@ class MainWindow(QMainWindow):
             return
         if self.pending_radio_id:
             return
+        bootstrap = self.ble_peers.get(self.pending_ble_token or "", {})
+        if bootstrap.get("device_id") != peer.get("device_id") or not bootstrap.get("public_key"):
+            self.status.setText("The Bluetooth and Wi-Fi identities do not match. Connection cancelled.")
+            self.reset_workflow()
+            return
+        peer = {
+            **peer,
+            "name": bootstrap.get("name") or peer.get("name"),
+            "port": bootstrap.get("port") or peer.get("port"),
+            "public_key": bootstrap["public_key"],
+        }
+        self.radio_peers[radio_id] = peer
         self.pending_radio_id = radio_id
         self.scan_timer.stop()
-        self.status.setText(f"Waiting for {peer.get('name') or 'the nearby device'} to accept the connection…")
+        self.status.setText(f"Creating a direct connection to {peer.get('name') or 'the nearby device'}…")
         try:
             self.radio.connect_wifi_direct(radio_id)
             QTimer.singleShot(45000, lambda target=radio_id: self._wifi_connection_timed_out(target))
@@ -424,17 +441,11 @@ class MainWindow(QMainWindow):
                 self.status.setText("Bluetooth found. Waiting for its Wi-Fi Direct endpoint…")
             self.refresh_nearby_devices()
         elif kind == "wifi_direct_connection_request":
-            answer = QMessageBox.question(
-                self,
-                "Incoming nearby connection",
-                f"{event.get('name') or 'A nearby device'} wants to create a direct Wi-Fi connection.\n\nAccept?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            event["accepted"] = answer == QMessageBox.Yes
+            # Establish the transport silently. The signed file offer below is
+            # the receiver's single user-facing Accept/Decline decision.
+            event["accepted"] = True
             event["_decision"].set()
-            if event["accepted"]:
-                self.status.setText("Connection accepted. Establishing the direct Wi-Fi link…")
+            self.status.setText("Nearby sender found. Preparing the secure file offer…")
         elif kind == "wifi_direct_connected":
             self.handle_wifi_connected(event)
         elif kind in error_events:
@@ -453,7 +464,7 @@ class MainWindow(QMainWindow):
             peer = wifi_by_token.get(token, {})
             ble_peer = self.ble_peers.get(token, {})
             trusted = self.store.peer(peer.get("device_id", "")) if peer else None
-            trust = " · trusted" if trusted else " · secure verification required"
+            trust = " · trusted" if trusted else " · new device"
             name = peer.get("name") or ble_peer.get("name") or f"Nearby device {token[-4:]}"
             item = QListWidgetItem(f"{name}\nBluetooth nearby{trust}")
             item.setData(Qt.UserRole, token)
@@ -492,6 +503,9 @@ class MainWindow(QMainWindow):
         try:
             port = int(radio_peer["port"])
             device_id = str(radio_peer["device_id"])
+            public_key = str(radio_peer["public_key"])
+            if len(unb64(public_key)) != 32:
+                raise ValueError("Invalid identity key")
         except (KeyError, TypeError, ValueError):
             self.status.setText("The nearby device uses an older discovery format. Update and restart both apps.")
             self.reset_workflow()
@@ -499,13 +513,15 @@ class MainWindow(QMainWindow):
         self.pending_peer = DiscoveredPeer(
             f"radio:{self.pending_radio_id}", address, port, device_id, radio_peer.get("name") or "Nearby device"
         )
-        if self.store.peer(device_id):
-            self.status.setText("Sending a file offer; waiting for the receiver to accept…")
-            self.network.send_files(self.pending_peer, list(self.paths))
-        else:
-            self.status.setText("First connection: verify the device with a one-time code before sending files.")
-            if not self.network.pair(self.pending_peer):
-                self.reset_workflow()
+        trusted = self.store.peer(device_id)
+        if trusted and (trusted["blocked"] or trusted["public_key"] != public_key):
+            self.status.setText("The nearby device identity changed. Forget it before connecting again.")
+            self.reset_workflow()
+            return
+        if not trusted:
+            self.store.trust_peer(device_id, self.pending_peer.display_name, public_key)
+        self.status.setText("Sending the file offer; waiting for the receiver to accept…")
+        self.network.send_files(self.pending_peer, list(self.paths))
 
     @Slot(object)
     def show_pair_code(self, request: Request) -> None:
@@ -536,16 +552,33 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def confirm_transfer(self, request: Request) -> None:
         peer, files = request.payload
-        descriptions = "\n".join(f"• {item['name']} ({item['size']:,} bytes)" for item in files)
-        answer = QMessageBox.question(
-            self,
-            "Incoming file request",
-            f"From verified device: {peer['name']}\n\n{descriptions}\n\nAccept and choose where to save?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+        def readable_size(size: int) -> str:
+            value = float(size)
+            for unit in ("B", "KB", "MB", "GB", "TB"):
+                if value < 1024 or unit == "TB":
+                    return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+                value /= 1024
+            return f"{size:,} B"
+
+        descriptions = "\n".join(
+            f"• {item['name']} — {readable_size(int(item['size']))}" for item in files
         )
-        if answer == QMessageBox.Yes:
-            request.result = QFileDialog.getExistingDirectory(self, "Choose destination folder") or None
+        total = readable_size(sum(int(item["size"]) for item in files))
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Incoming files")
+        dialog.setIcon(QMessageBox.Question)
+        dialog.setText(
+            f"{peer['name']} wants to send:\n\n{descriptions}\n\n"
+            f"Total: {total}\nSave to Downloads?"
+        )
+        accept_button = dialog.addButton("Accept", QMessageBox.AcceptRole)
+        dialog.addButton("Deny", QMessageBox.RejectRole)
+        dialog.exec()
+        if dialog.clickedButton() is accept_button:
+            downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
+            destination = Path(downloads) if downloads else Path.home() / "Downloads"
+            destination.mkdir(parents=True, exist_ok=True)
+            request.result = str(destination)
         request.event.set()
 
     @Slot()
