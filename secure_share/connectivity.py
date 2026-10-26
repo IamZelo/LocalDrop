@@ -9,7 +9,6 @@ from typing import Callable, Iterable
 
 class Transport(str, enum.Enum):
     LAN = "lan"
-    HOTSPOT = "hotspot"
     WIFI_DIRECT = "wifi_direct"
 
 
@@ -60,7 +59,19 @@ class TransferResult:
         return not self.succeeded and self.retryable and not self.offer_sent
 
 
-ROUTE_ORDER = {Transport.LAN: 0, Transport.HOTSPOT: 1, Transport.WIFI_DIRECT: 2}
+@dataclass(frozen=True)
+class RouteOutcome:
+    device_id: str
+    transport: Transport
+    endpoint: str
+    phase: TransferPhase
+    duration: float
+    succeeded: bool
+    retryable: bool = False
+    offer_sent: bool = False
+
+
+ROUTE_ORDER = {Transport.LAN: 0, Transport.WIFI_DIRECT: 1}
 
 
 def ordered_routes(routes: Iterable[ConnectionRoute]) -> tuple[ConnectionRoute, ...]:

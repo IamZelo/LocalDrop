@@ -17,6 +17,12 @@ class Peer:
     port: int
     device_id: str
     display_name: str
+    public_key: str = ""
+    protocol_version: int = 1
+    transport: object = None
+    local_interface: str | None = None
+    fresh_at: float = 0.0
+    capabilities: frozenset[str] = frozenset({"lan"})
 
 def module(name, **values):
     result = types.ModuleType(name)
@@ -40,11 +46,13 @@ def load(name):
         gui = module("PySide6.QtGui", QCloseEvent=object, QDragEnterEvent=object, QDropEvent=object)
         widgets = module("PySide6.QtWidgets", **{key: type(key, (), {}) for key in
             ("QApplication", "QFileDialog", "QHBoxLayout", "QLabel", "QListWidget", "QListWidgetItem",
-             "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget")})
+             "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget", "QDialog",
+             "QCheckBox")})
         replacements.update({"PySide6": module("PySide6"), "PySide6.QtCore": core,
             "PySide6.QtGui": gui, "PySide6.QtWidgets": widgets,
             "qasync": module("qasync", QEventLoop=Mock()),
-            "secure_share.network": module("secure_share.network", NetworkManager=Mock(), InteractionCallbacks=Mock())})
+            "secure_share.network": module("secure_share.network", NetworkManager=Mock(), InteractionCallbacks=Mock(),
+                TransferApproval=type("TransferApproval", (), {}))})
     if name == "network":
         replacements.update({"cryptography": module("cryptography", x509=Mock()),
             "cryptography.hazmat": module("cryptography.hazmat"),

@@ -32,6 +32,12 @@ APPROVAL_TIMEOUT = 330
 STREAM_TIMEOUT = 60
 
 
+@dataclass(frozen=True)
+class TransferApproval:
+    destination: str
+    always_accept: bool = False
+
+
 class NetworkError(Exception):
     def __init__(self, message: str, *, phase: str = "connect", retryable: bool = False,
                  offer_sent: bool = False):
@@ -49,7 +55,7 @@ class RouteAuthorization:
 
 
 class InteractionCallbacks:
-    def __init__(self, accept_transfer: Callable[[dict, list[dict]], str | None],
+    def __init__(self, accept_transfer: Callable[[dict, list[dict]], TransferApproval | str | None],
                  status: Callable[[str], None], progress: Callable[[str, int], None],
                  transfer_finished: Callable[[bool], None],
                  receive_finished: Callable[[], None] = lambda: None,
@@ -231,6 +237,7 @@ class NetworkManager:
             return
         def work():
             transfer_id = uuid.uuid4().hex
+            route_started = time.monotonic()
             succeeded = False
             offer_sent = False
             failure: Exception | None = None
@@ -323,11 +330,18 @@ class NetworkManager:
                 except Exception:
                     pass
                 self._send_lock.release()
+                transport = getattr(peer, "transport", None) or Transport.LAN
+                self.store.record_route(peer.device_id, transport.value,
+                                        f"{peer.host}:{peer.port}",
+                                        time.monotonic() - route_started, succeeded)
                 if self.callbacks.result_finished:
                     phase_value = next((value for value in TransferPhase if value.value == phase), TransferPhase.CONNECT)
                     retryable = isinstance(failure, NetworkError) and getattr(failure, "retryable", False)
-                    self.callbacks.result_finished(TransferResult(succeeded, TransferPhase.COMPLETE if succeeded else phase_value,
-                                                                  retryable, offer_sent, "" if succeeded else str(failure)))
+                    self.callbacks.result_finished(TransferResult(
+                        succeeded, TransferPhase.COMPLETE if succeeded else phase_value,
+                        retryable, offer_sent, "" if succeeded else str(failure),
+                        transport=transport,
+                    ))
                 self.callbacks.transfer_finished(succeeded)
         threading.Thread(target=work, daemon=True).start()
 
@@ -361,15 +375,21 @@ class NetworkManager:
             "blocked": False,
         }
         logger.info("Incoming offer transfer=%s sender=%s files=%d", offer["transfer_id"], sender_name, len(offer["files"]))
-        folder = self.callbacks.accept_transfer(offered_by, offer["files"])
+        folder = (TransferApproval(str(_automatic_destination(sender_name)))
+                  if trusted and trusted.get("auto_accept")
+                  else self.callbacks.accept_transfer(offered_by, offer["files"]))
         if not folder:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Transfer declined"})
             return
-        destination_dir = Path(folder)
+        approval = folder if isinstance(folder, TransferApproval) else TransferApproval(str(folder))
+        destination_dir = Path(approval.destination)
         destination_dir.mkdir(parents=True, exist_ok=True)
         if not trusted:
-            self.store.trust_peer(device_id, sender_name, sender_public_key)
+            self.store.trust_peer(device_id, sender_name, sender_public_key,
+                                  auto_accept=approval.always_accept)
             trusted = self.store.peer(device_id)
+        elif approval.always_accept:
+            self.store.set_auto_accept(device_id, True)
         required = sum(int(item["size"]) for item in offer["files"])
         if required > __import__("shutil").disk_usage(destination_dir).free:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Insufficient disk space"})
@@ -423,3 +443,9 @@ class NetworkManager:
             self._links.clear()
             self._link_condition.notify_all()
         self.listener.close()
+
+
+def _automatic_destination(device_name: str) -> Path:
+    safe = "".join(character if character.isalnum() or character in " .-_" else "_"
+                   for character in device_name).strip(" .")[:80] or "Unknown device"
+    return Path.home() / "Downloads" / "Local Secure Share" / safe

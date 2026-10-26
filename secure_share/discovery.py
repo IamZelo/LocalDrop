@@ -14,6 +14,7 @@ from .identity import unb64
 from .protocol import SERVICE_TYPE
 
 DISCOVERY_VERSION = 1
+LAN_CAPABILITY = frozenset({"lan"})
 # Zeroconf host records commonly use a 120-second TTL.  Expiring observations
 # sooner can remove a healthy peer before the browser receives its refresh.
 STALE_AFTER = 180.0
@@ -70,6 +71,11 @@ class DiscoveredPeer:
     transport: Transport = Transport.LAN
     local_interface: str | None = None
     fresh_at: float = 0.0
+    capabilities: frozenset[str] = LAN_CAPABILITY
+
+    @property
+    def supports_wifi_direct(self) -> bool:
+        return "wifi_direct" in self.capabilities
 
 
 def peers_from_service(info: ServiceInfo, own_device_id: str, now: float | None = None) -> list[DiscoveredPeer]:
@@ -77,6 +83,8 @@ def peers_from_service(info: ServiceInfo, own_device_id: str, now: float | None 
         props = {bytes(k).decode("utf-8"): bytes(v).decode("utf-8") for k, v in info.properties.items()}
         device_id, display_name, public_key = props["id"].strip(), props["name"].strip(), props["key"].strip()
         version = int(props["v"])
+        capabilities = frozenset(value.strip() for value in props.get("cap", "lan").split(",")
+                                 if value.strip()) or LAN_CAPABILITY
         if not device_id or device_id == own_device_id or not display_name or version < 1:
             return []
         if not 0 < int(info.port) < 65536 or len(unb64(public_key)) != 32:
@@ -91,7 +99,7 @@ def peers_from_service(info: ServiceInfo, own_device_id: str, now: float | None 
             continue
         seen.add(address)
         result.append(DiscoveredPeer(info.name, address, int(info.port), device_id, display_name,
-                                     public_key, version, Transport.LAN, None, observed_at))
+                                     public_key, version, Transport.LAN, None, observed_at, capabilities))
     return result
 
 
@@ -135,6 +143,7 @@ class Discovery:
         port: int,
         public_key: str | Callable[[list[DiscoveredPeer]], None],
         on_change: Callable[[list[DiscoveredPeer]], None] | None = None,
+        capabilities: frozenset[str] = LAN_CAPABILITY,
     ):
         if on_change is None:
             on_change = public_key  # backwards-compatible four-argument form
@@ -144,6 +153,7 @@ class Discovery:
         self.port = port
         self.public_key = str(public_key)
         self.on_change = on_change
+        self.capabilities = capabilities
         self.peers: dict[str, dict[str, DiscoveredPeer]] = {}
         self.lock = threading.Lock()
         self.zc = Zeroconf(ip_version=IPVersion.V4Only)
@@ -152,7 +162,8 @@ class Discovery:
             SERVICE_TYPE,
             instance,
             port=port,
-            properties={"id": device_id, "name": display_name, "v": str(DISCOVERY_VERSION), "key": self.public_key},
+            properties={"id": device_id, "name": display_name, "v": str(DISCOVERY_VERSION),
+                        "key": self.public_key, "cap": ",".join(sorted(capabilities))},
             server=f"{socket.gethostname().replace('.', '-')}.local.",
             addresses=_ipv4_addresses(),
         )

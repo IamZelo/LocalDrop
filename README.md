@@ -1,6 +1,6 @@
 # Local Secure Share
 
-A local file-sharing application for Windows 11 24H2+. It discovers peers on the existing LAN immediately and retains in-process Python WinRT Wi-Fi Direct as an offline route. The packaged build also exposes the Windows capabilities needed for per-session Mobile Hotspot automation. Bluetooth is not used. There is no internet relay, cloud service, or account server.
+A local file-sharing application for Windows 11 and macOS. It discovers peers on the existing LAN immediately. Windows can fall back to in-process Python WinRT Wi-Fi Direct for another Windows peer; macOS is strictly LAN-only. Bluetooth is not used. There is no internet relay, cloud service, or account server.
 
 ## Setup on both computers
 
@@ -13,7 +13,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Keep Wi-Fi enabled and the application open on both computers. `python main.py` remains supported for LAN and Wi-Fi Direct development. Hotspot automation requires a signed MSIX built with `packaging/AppxManifest.xml`; unpackaged execution reports the missing package capability without disabling other routes.
+Keep Wi-Fi enabled and the application open on both computers. On Windows, the packaged manifest declares the Wi-Fi Direct device capability. macOS never loads WinRT or starts wireless-direct discovery.
 
 Allow this Python executable's inbound connections in Windows Firewall on the network profile used by the Wi-Fi Direct interface. The application logs its actual listening port at startup. Do not disable the firewall. Windows Mobile Hotspot can interfere with Wi-Fi Direct; turn it off when diagnosing connection failures.
 
@@ -21,7 +21,7 @@ Allow this Python executable's inbound connections in Windows Firewall on the ne
 
 1. Drop or add files.
 2. Select a computer in the merged nearby-device list. LAN and Wi-Fi Direct observations are grouped by application identity.
-3. The route policy is existing LAN, temporary hotspot, then Wi-Fi Direct. Fallback is permitted only before a signed file offer is sent.
+3. The route policy is LAN first, then (for two capable Windows peers only) Wi-Fi Direct. Fallback is permitted only after a pre-offer connection failure.
 4. The receiver sees filenames and sizes and chooses **Accept** or **Deny**. The sender allows five minutes for approval.
 5. Accepted files stream over TLS 1.3 into Downloads, with SHA-256 verification. Existing files are given unique destination names.
 
@@ -36,7 +36,7 @@ python -m secure_share.diagnostics
 python -m unittest discover -s tests -v
 ```
 
-The diagnostic command reports package/`wiFiControl` availability, mDNS interfaces, publisher status, nearby endpoints, and native errors. Keep both consoles when reproducing a failure. The tests cover protocol validation, route policy, hotspot key agreement, and application control flow with GUI, cryptography, and native boundaries mocked where needed; they do not prove a physical wireless connection works.
+The diagnostic command reports mDNS interfaces and, on Windows, publisher status, nearby endpoints, and native errors. On macOS it reports that Wi-Fi Direct is not applicable without importing WinRT. The tests cover protocol validation, route policy, and application control flow with GUI, cryptography, and native boundaries mocked where needed; they do not prove a physical wireless connection works.
 
 Hardware acceptance checklist:
 
