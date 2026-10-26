@@ -33,25 +33,27 @@ def load(name):
     b64 = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
     unb64 = lambda value: base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     identity = module("secure_share.identity", b64=b64, unb64=unb64, Identity=object,
-        load_or_create_identity=Mock(), export_private_key_pem=Mock(), verify=Mock())
+        load_or_create_identity=Mock(), update_display_name=Mock(),
+        export_private_key_pem=Mock(), verify=Mock())
     replacements = {
         "secure_share.identity": identity,
         "secure_share.storage": module("secure_share.storage", LocalStore=Mock()),
         "secure_share.discovery": module("secure_share.discovery", DiscoveredPeer=Peer),
     }
     if name == "app":
-        core = module("PySide6.QtCore", QObject=object, QStandardPaths=Mock(),
+        core = module("PySide6.QtCore", QObject=object, QSize=Mock(), QStandardPaths=Mock(),
             Qt=types.SimpleNamespace(UserRole=1, ItemIsEnabled=2, ItemIsSelectable=4, CustomContextMenu=3), QTimer=Mock(),
             Signal=lambda *args: Mock(), Slot=lambda *args: lambda fn: fn)
-        gui = module("PySide6.QtGui", QColor=Mock(), QPalette=Mock(), QCloseEvent=object,
-            QDragEnterEvent=object, QDropEvent=object)
+        gui = module("PySide6.QtGui", QColor=Mock(), QIcon=Mock(), QPalette=Mock(), QTransform=Mock(),
+            QCloseEvent=object, QDragEnterEvent=object, QDropEvent=object)
         widgets = module("PySide6.QtWidgets", **{key: type(key, (), {}) for key in
             ("QApplication", "QFileDialog", "QHBoxLayout", "QLabel", "QListWidget", "QListWidgetItem",
              "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget",
-             "QCheckBox", "QMenu")})
+             "QCheckBox", "QInputDialog", "QMenu", "QStyle", "QToolButton")})
         replacements.update({"PySide6": module("PySide6"), "PySide6.QtCore": core,
             "PySide6.QtGui": gui, "PySide6.QtWidgets": widgets,
             "qasync": module("qasync", QEventLoop=Mock()),
+            "qt_material_icons": module("qt_material_icons", MaterialIcon=Mock()),
             "secure_share.network": module("secure_share.network", NetworkManager=Mock(), InteractionCallbacks=Mock(),
                 TransferApproval=type("TransferApproval", (), {}))})
     if name == "network":

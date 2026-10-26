@@ -79,14 +79,59 @@ def missing_modules() -> list[str]:
     return missing
 
 
+def _advertisement_payload(device_id: str, port: int, token: bytes,
+                           public_key: str, display_name: str = "") -> bytes:
+    identity = device_id.encode("utf-8")
+    name = display_name.strip().encode("utf-8")
+    if len(identity) > 64:
+        raise ValueError("device identity is too long for Wi-Fi Direct discovery")
+    if len(name) > 80:
+        raise ValueError("device name is too long for Wi-Fi Direct discovery")
+    public_key_raw = unb64(public_key) if public_key else b""
+    return (MAGIC + token + port.to_bytes(2, "big") + bytes((len(identity),)) + identity
+            + public_key_raw + bytes((len(name),)) + name)
+
+
+def _parse_advertisement_payload(value: bytes) -> tuple[str, int, str, str, str] | None:
+    if len(value) < 15 or not value.startswith(MAGIC):
+        return None
+    token = value[4:12].hex().upper()
+    port = int.from_bytes(value[12:14], "big")
+    identity_length = value[14]
+    identity_end = 15 + identity_length
+    key_end = identity_end + 32
+    if len(value) < key_end:
+        return None
+    try:
+        device_id = value[15:identity_end].decode("utf-8", errors="strict")
+    except UnicodeError:
+        return None
+    public_key = b64(value[identity_end:key_end])
+    display_name = ""
+    if len(value) > key_end:
+        name_length = value[key_end]
+        name_end = key_end + 1 + name_length
+        if len(value) < name_end:
+            return None
+        try:
+            display_name = value[key_end + 1:name_end].decode("utf-8", errors="strict").strip()
+        except UnicodeError:
+            return None
+    if not token or not port or not device_id:
+        return None
+    return token, port, device_id, public_key, display_name
+
+
 class PythonWinRTRadio:
     """Windows Wi-Fi Direct discovery and connection control via PyWinRT."""
 
     def __init__(
-        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = ""
+        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = "",
+        display_name: str = "",
     ):
         self.device_id = device_id
         self.public_key = public_key
+        self.display_name = display_name
         self.on_event = on_event
         self.port = port
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -194,20 +239,17 @@ class PythonWinRTRadio:
         element = WiFiDirectInformationElement()
         element.oui = self._buffer(CUSTOM_OUI)
         element.oui_type = 1
-        identity = self.device_id.encode("utf-8")
-        if len(identity) > 64:
-            raise ValueError("device identity is too long for Wi-Fi Direct discovery")
-        public_key_raw = unb64(self.public_key) if self.public_key else b""
-        element.value = self._buffer(
-            MAGIC + self.token + self.port.to_bytes(2, "big") + bytes((len(identity),)) + identity + public_key_raw
-        )
+        element.value = self._buffer(_advertisement_payload(
+            self.device_id, self.port, self.token, self.public_key, self.display_name
+        ))
         advertisement.information_elements.append(element)
         token = self.wifi_publisher.add_status_changed(self._publisher_status_changed)
         self._remember_event(self.wifi_publisher, "status_changed", token)
 
-        self.wifi_listener = WiFiDirectConnectionListener()
-        token = self.wifi_listener.add_connection_requested(self._connection_requested)
-        self._remember_event(self.wifi_listener, "connection_requested", token)
+        if self.wifi_listener is None:
+            self.wifi_listener = WiFiDirectConnectionListener()
+            token = self.wifi_listener.add_connection_requested(self._connection_requested)
+            self._remember_event(self.wifi_listener, "connection_requested", token)
         self.wifi_publisher.start()
 
     def _publisher_status_changed(self, _sender, args) -> None:
@@ -402,33 +444,25 @@ class PythonWinRTRadio:
         from winrt.windows.devices.wifidirect import WiFiDirectInformationElement
 
         try:
-            peer_token = None
-            port = 0
-            device_id = ""
-            public_key = ""
+            parsed = None
             elements = WiFiDirectInformationElement.create_from_device_information(device)
             logger.debug("Inspecting %d information element(s) for Wi-Fi Direct endpoint %s", len(elements), device.id)
             for element in elements:
                 value = self._bytes(element.value)
-                if element.oui_type == 1 and self._bytes(element.oui) == CUSTOM_OUI and len(value) >= 15 and value.startswith(MAGIC):
-                    peer_token = value[4:12].hex().upper()
-                    port = int.from_bytes(value[12:14], "big")
-                    identity_length = value[14]
-                    if len(value) < 15 + identity_length:
-                        peer_token = None
-                        continue
-                    device_id = value[15:15 + identity_length].decode("utf-8", errors="strict")
-                    public_key_raw = value[15 + identity_length:15 + identity_length + 32]
-                    public_key = b64(public_key_raw) if len(public_key_raw) == 32 else ""
+                if element.oui_type == 1 and self._bytes(element.oui) == CUSTOM_OUI:
+                    parsed = _parse_advertisement_payload(value)
+                if parsed:
                     break
-            if peer_token and port and device_id and len(public_key_raw) == 32 and device_id != self.device_id:
+            if parsed and parsed[2] != self.device_id:
+                peer_token, port, device_id, public_key, display_name = parsed
                 self.wifi_scan_matches.add(device.id)
                 logger.info(
                     "Matched Wi-Fi Direct endpoint id=%s name=%r token=%s port=%s device_id=%s has_key=%s",
                     device.id, device.name, peer_token, port, device_id, bool(public_key),
                 )
                 self.on_event(
-                    {"event": "wifi_direct_peer", "id": device.id, "name": device.name,
+                    {"event": "wifi_direct_peer", "id": device.id,
+                     "name": display_name or device.name,
                      "paired": device.pairing.is_paired, "token": peer_token,
                      "port": port, "device_id": device_id, "public_key": public_key}
                 )
@@ -442,6 +476,28 @@ class PythonWinRTRadio:
         except Exception as exc:
             logger.warning("Could not inspect Wi-Fi Direct endpoint %s: %s", getattr(device, "id", "unknown"), exc)
             return False
+
+    def update_display_name(self, display_name: str) -> None:
+        self.display_name = display_name
+        if self.started:
+            self._schedule(self._restart_advertisement())
+
+    async def _restart_advertisement(self) -> None:
+        old_publisher = self.wifi_publisher
+        if old_publisher is not None:
+            for owner, event, token in list(self.event_tokens):
+                if owner is old_publisher:
+                    try:
+                        getattr(owner, f"remove_{event}")(token)
+                    except Exception:
+                        pass
+                    self.event_tokens.remove((owner, event, token))
+            try:
+                old_publisher.stop()
+            except Exception:
+                pass
+        self.wifi_publisher = None
+        self._start_wifi_direct()
 
     def connect_wifi_direct(self, device_id: str, attempt_id: str) -> None:
         if not self.started:

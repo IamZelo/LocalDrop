@@ -158,20 +158,25 @@ class Discovery:
         self.capabilities = capabilities
         self.peers: dict[str, dict[str, DiscoveredPeer]] = {}
         self.lock = threading.Lock()
+        self.registration_lock = threading.Lock()
         self.zc = Zeroconf(ip_version=IPVersion.V4Only)
-        instance = f"LocalSecureShare-{device_id[:10]}.{SERVICE_TYPE}"
-        self.info = ServiceInfo(
-            SERVICE_TYPE,
-            instance,
-            port=port,
-            properties={"id": device_id, "name": display_name, "v": str(DISCOVERY_VERSION),
-                        "key": self.public_key, "cap": ",".join(sorted(capabilities))},
-            server=f"{socket.gethostname().replace('.', '-')}.local.",
-            addresses=_ipv4_addresses(),
-        )
+        self.instance = f"LocalSecureShare-{device_id[:10]}.{SERVICE_TYPE}"
+        self.server = f"{socket.gethostname().replace('.', '-')}.local."
+        self.info = self._registration_info(display_name, _ipv4_addresses())
         self.zc.register_service(self.info)
         self.listener = _Listener(self)
         self.browser = ServiceBrowser(self.zc, SERVICE_TYPE, self.listener)
+
+    def _registration_info(self, display_name: str, addresses: list[bytes]) -> ServiceInfo:
+        return ServiceInfo(
+            SERVICE_TYPE,
+            self.instance,
+            port=self.port,
+            properties={"id": self.device_id, "name": display_name, "v": str(DISCOVERY_VERSION),
+                        "key": self.public_key, "cap": ",".join(sorted(self.capabilities))},
+            server=self.server,
+            addresses=addresses,
+        )
 
     def _snapshot(self) -> list[DiscoveredPeer]:
         latest: dict[str, DiscoveredPeer] = {}
@@ -204,9 +209,18 @@ class Discovery:
 
     def refresh_registration(self) -> None:
         addresses = _ipv4_addresses()
-        if addresses != self.info.addresses:
-            self.info.addresses = addresses
-            self.zc.update_service(self.info)
+        with self.registration_lock:
+            if addresses != self.info.addresses:
+                updated = self._registration_info(self.display_name, addresses)
+                self.zc.update_service(updated)
+                self.info = updated
+
+    def update_display_name(self, display_name: str) -> None:
+        with self.registration_lock:
+            updated = self._registration_info(display_name, list(self.info.addresses))
+            self.zc.update_service(updated)
+            self.info = updated
+            self.display_name = display_name
 
     def refresh(self) -> None:
         """Re-advertise current addresses and issue a fresh browse for LAN peers."""

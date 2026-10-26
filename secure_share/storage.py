@@ -40,6 +40,7 @@ class LocalStore:
             "capabilities": "TEXT NOT NULL DEFAULT 'lan'",
             "last_seen": "TEXT",
             "auto_accept": "INTEGER NOT NULL DEFAULT 0",
+            "encrypted_alias": "BLOB",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -89,13 +90,37 @@ class LocalStore:
     def peer(self, device_id: str) -> dict | None:
         with self.lock:
             row = self.db.execute(
-                "SELECT device_id,public_key,encrypted_name,blocked,capabilities,last_seen,auto_accept FROM peers WHERE device_id=?", (device_id,)
+                "SELECT device_id,public_key,encrypted_name,blocked,capabilities,last_seen,auto_accept,encrypted_alias FROM peers WHERE device_id=?", (device_id,)
             ).fetchone()
         if not row:
             return None
-        return {"device_id": row[0], "public_key": row[1], "name": self.cipher.decrypt(row[2]).decode(),
+        advertised_name = self.cipher.decrypt(row[2]).decode()
+        alias = self.cipher.decrypt(row[7]).decode() if row[7] else None
+        return {"device_id": row[0], "public_key": row[1], "name": alias or advertised_name,
+                "advertised_name": advertised_name, "alias": alias,
                 "blocked": bool(row[3]), "capabilities": row[4] or "lan", "last_seen": row[5],
                 "auto_accept": bool(row[6])}
+
+    def rename_peer(self, device_id: str, alias: str | None) -> None:
+        """Set a private display alias; an empty value restores the advertised name."""
+        normalized = (alias or "").strip()
+        encrypted = self.cipher.encrypt(normalized.encode()) if normalized else None
+        with self.lock:
+            cursor = self.db.execute(
+                "UPDATE peers SET encrypted_alias=? WHERE device_id=?", (encrypted, device_id)
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Unknown trusted device: {device_id}")
+            self.db.commit()
+
+    def update_peer_name(self, device_id: str, advertised_name: str) -> None:
+        """Refresh a verified peer name while preserving its private alias."""
+        encrypted = self.cipher.encrypt(advertised_name.encode())
+        with self.lock:
+            self.db.execute(
+                "UPDATE peers SET encrypted_name=? WHERE device_id=?", (encrypted, device_id)
+            )
+            self.db.commit()
 
     def observe_peer(self, device_id: str, capabilities: str) -> None:
         with self.lock:

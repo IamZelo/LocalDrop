@@ -25,6 +25,8 @@ class UnavailableRadio:
     def connect_wifi_direct(self, _device_id: str, _attempt_id: str) -> None:
         raise RuntimeError(self.reason)
 
+    def update_display_name(self, _display_name: str) -> None:
+        return
 
 
     def close(self) -> None:
@@ -35,7 +37,8 @@ class NativeRadio:
     """Single Windows radio implementation backed by in-process PyWinRT."""
 
     def __init__(
-        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = ""
+        self, device_id: str, port: int, on_event: Callable[[dict], None], public_key: str = "",
+        display_name: str = "",
     ):
         self.on_event = on_event
         self.implementation = "unavailable"
@@ -54,7 +57,9 @@ class NativeRadio:
                 logger.error(reason)
                 self.backend = UnavailableRadio(reason)
                 return
-            self.backend = PythonWinRTRadio(device_id, port, on_event, public_key=public_key)
+            self.backend = PythonWinRTRadio(
+                device_id, port, on_event, public_key=public_key, display_name=display_name
+            )
             self.implementation = "python-winrt"
             logger.info("Selected radio backend: Python WinRT (single backend; no helper fallback)")
         except Exception as exc:
@@ -83,6 +88,8 @@ class NativeRadio:
         if self.supported:
             self.backend.reset_wifi_direct()
 
+    def update_display_name(self, display_name: str) -> None:
+        self.backend.update_display_name(display_name)
 
 
     def close(self) -> None:

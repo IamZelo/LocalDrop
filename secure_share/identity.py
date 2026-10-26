@@ -5,7 +5,7 @@ import json
 import os
 import socket
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -134,6 +134,25 @@ def load_or_create_identity(display_name: str | None = None) -> Identity:
         )
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     return Identity(device_id, name, private, cert_path, fallback)
+
+
+def update_display_name(identity: Identity, display_name: str) -> Identity:
+    """Persist a user-selected device name without changing cryptographic identity."""
+    normalized = display_name.strip()
+    if not normalized:
+        raise ValueError("Device name cannot be empty")
+    if len(normalized.encode("utf-8")) > 80:
+        raise ValueError("Device name must be 80 bytes or fewer")
+    if any(ord(character) < 32 for character in normalized):
+        raise ValueError("Device name cannot contain control characters")
+    profile_path = app_data_dir() / "profile.json"
+    temporary_path = profile_path.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps({"device_id": identity.device_id, "display_name": normalized}, indent=2),
+        encoding="utf-8",
+    )
+    temporary_path.replace(profile_path)
+    return replace(identity, display_name=normalized)
 
 
 def export_private_key_pem(identity: Identity) -> bytes:
