@@ -1,6 +1,6 @@
 import base64
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from radio_test_support import load
 
 app = load("app")
@@ -82,8 +82,7 @@ class WorkflowTests(unittest.TestCase):
         self.window.discovery = Mock()
         self.window.scan_radios = Mock()
         self.window.refresh_devices()
-        self.window.discovery.refresh_registration.assert_called_once_with()
-        self.window.discovery.prune.assert_called_once_with()
+        self.window.discovery.refresh.assert_called_once_with()
         self.window.refresh_nearby_devices.assert_called_once_with()
         self.window.scan_radios.assert_called_once_with()
 
@@ -102,3 +101,23 @@ class WorkflowTests(unittest.TestCase):
         self.window.device_clicked(item)
         self.window.network.send_files.assert_not_called()
         self.window.status.setText.assert_called_with("Drop or add files before selecting a device.")
+
+    def test_offline_trusted_device_can_be_revoked(self):
+        item = Mock()
+        item.data.side_effect = lambda role: {
+            app.DEVICE_TRUSTED_ROLE: True,
+            app.DEVICE_ID_ROLE: "peer",
+        }.get(role)
+        self.window.devices = Mock()
+        self.window.devices.itemAt.return_value = item
+        menu = Mock()
+        action = object()
+        menu.addAction.return_value = action
+        menu.exec.return_value = action
+        app.QMessageBox.Yes = 1
+        app.QMessageBox.No = 2
+        app.QMessageBox.question = Mock(return_value=1)
+        with patch.object(app, "QMenu", return_value=menu):
+            self.window.show_device_menu(Mock())
+        self.window.store.revoke_trust.assert_called_once_with("peer")
+        self.window.refresh_nearby_devices.assert_called_once_with()

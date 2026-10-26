@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import threading
 import time
@@ -18,6 +19,7 @@ LAN_CAPABILITY = frozenset({"lan"})
 # Zeroconf host records commonly use a 120-second TTL.  Expiring observations
 # sooner can remove a healthy peer before the browser receives its refresh.
 STALE_AFTER = 180.0
+logger = logging.getLogger("secure_share.discovery")
 
 
 def _usable_ipv4(address: str, *, remote: bool = False) -> bool:
@@ -168,7 +170,8 @@ class Discovery:
             addresses=_ipv4_addresses(),
         )
         self.zc.register_service(self.info)
-        self.browser = ServiceBrowser(self.zc, SERVICE_TYPE, _Listener(self))
+        self.listener = _Listener(self)
+        self.browser = ServiceBrowser(self.zc, SERVICE_TYPE, self.listener)
 
     def _snapshot(self) -> list[DiscoveredPeer]:
         latest: dict[str, DiscoveredPeer] = {}
@@ -205,6 +208,14 @@ class Discovery:
             self.info.addresses = addresses
             self.zc.update_service(self.info)
 
+    def refresh(self) -> None:
+        """Re-advertise current addresses and issue a fresh browse for LAN peers."""
+        self.refresh_registration()
+        old_browser = self.browser
+        old_browser.cancel()
+        self.browser = ServiceBrowser(self.zc, SERVICE_TYPE, self.listener)
+        logger.info("Restarted mDNS browse for an immediate LAN refresh")
+
     def prune(self, now: float | None = None) -> None:
         cutoff = (now or time.monotonic()) - STALE_AFTER
         with self.lock:
@@ -218,5 +229,7 @@ class Discovery:
         self.on_change(snapshot)
 
     def close(self) -> None:
-        self.zc.unregister_service(self.info)
+        self.browser.cancel()
+        # Zeroconf.close() already withdraws registered services. Calling
+        # unregister_service first repeats the goodbye broadcast and delays exit.
         self.zc.close()

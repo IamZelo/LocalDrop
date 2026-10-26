@@ -43,7 +43,8 @@ def load(name):
         core = module("PySide6.QtCore", QObject=object, QStandardPaths=Mock(),
             Qt=types.SimpleNamespace(UserRole=1, ItemIsEnabled=2, ItemIsSelectable=4, CustomContextMenu=3), QTimer=Mock(),
             Signal=lambda *args: Mock(), Slot=lambda *args: lambda fn: fn)
-        gui = module("PySide6.QtGui", QColor=Mock(), QCloseEvent=object, QDragEnterEvent=object, QDropEvent=object)
+        gui = module("PySide6.QtGui", QColor=Mock(), QPalette=Mock(), QCloseEvent=object,
+            QDragEnterEvent=object, QDropEvent=object)
         widgets = module("PySide6.QtWidgets", **{key: type(key, (), {}) for key in
             ("QApplication", "QFileDialog", "QHBoxLayout", "QLabel", "QListWidget", "QListWidgetItem",
              "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget",

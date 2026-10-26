@@ -1,5 +1,6 @@
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -38,6 +39,7 @@ class NetworkTransferTests(unittest.TestCase):
                          [network.APPROVAL_TIMEOUT, network.STREAM_TIMEOUT])
         self.assertGreater(network.APPROVAL_TIMEOUT, 300)
         self.manager.callbacks.transfer_finished.assert_called_once_with(True)
+        self.manager.callbacks.trust_changed.assert_called_once_with()
         self.manager._connect.assert_called_once_with(
             self.peer, "key", timeout=8, local_address="192.168.137.2"
         )
@@ -67,3 +69,24 @@ class NetworkTransferTests(unittest.TestCase):
                 self.manager._connect(self.peer, "key", local_address="192.168.137.2")
         raw.bind.assert_called_once_with(("192.168.137.2", 0))
         raw.close.assert_called_once()
+
+    def test_incoming_route_reports_transport(self):
+        manager = object.__new__(network.NetworkManager)
+        manager.running = True
+        manager._link_condition = threading.Condition()
+        manager._authorizations = {
+            ("192.168.1.4", "session"): network.RouteAuthorization(
+                "192.168.1.4", network.Transport.LAN, "session", time.monotonic() + 30
+            )
+        }
+        manager._receive_lock = threading.Lock()
+        manager.callbacks = Mock()
+        manager._receive_files = Mock()
+        wrapped = Mock()
+        manager._server_context = Mock()
+        manager._server_context.wrap_socket.return_value = wrapped
+        raw = Mock()
+        raw.getsockname.return_value = ("192.168.1.2", 63151)
+        with patch.object(network, "recv_frame", return_value=("json", {"type": "offer"})):
+            manager._handle_client(raw, ("192.168.1.4", 52000))
+        manager.callbacks.route_started.assert_called_once_with(network.Transport.LAN)

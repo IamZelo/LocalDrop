@@ -59,13 +59,17 @@ class InteractionCallbacks:
                  status: Callable[[str], None], progress: Callable[[str, int], None],
                  transfer_finished: Callable[[bool], None],
                  receive_finished: Callable[[], None] = lambda: None,
-                 result_finished: Callable[[TransferResult], None] | None = None):
+                 result_finished: Callable[[TransferResult], None] | None = None,
+                 route_started: Callable[[Transport], None] | None = None,
+                 trust_changed: Callable[[], None] | None = None):
         self.accept_transfer = accept_transfer
         self.status = status
         self.progress = progress
         self.transfer_finished = transfer_finished
         self.receive_finished = receive_finished
         self.result_finished = result_finished
+        self.route_started = route_started
+        self.trust_changed = trust_changed
 
 
 def _local_address(address: str) -> bool:
@@ -181,16 +185,18 @@ class NetworkManager:
         endpoint = (raw.getsockname()[0], address[0])
         with self._link_condition:
             # A queued Qt endpoint notification may arrive just after TCP accept.
-            def authorized():
+            def matching_authorization() -> RouteAuthorization | None:
                 now = time.monotonic()
                 self._authorizations = {key: value for key, value in self._authorizations.items()
                                         if value.expires_at > now}
-                return any(value.remote_address == address[0] for value in self._authorizations.values())
+                return next((value for value in self._authorizations.values()
+                             if value.remote_address == address[0]), None)
             allowed = self._link_condition.wait_for(
-                lambda: authorized() or not self.running,
+                lambda: matching_authorization() is not None or not self.running,
                 2,
             )
-            allowed = allowed and self.running and authorized()
+            authorization = matching_authorization() if allowed and self.running else None
+            allowed = authorization is not None
         if not allowed:
             with self._link_condition:
                 expected = sorted({value.remote_address for value in self._authorizations.values()})
@@ -201,6 +207,8 @@ class NetworkManager:
         sock = None
         receiving = False
         try:
+            if self.callbacks.route_started and authorization:
+                self.callbacks.route_started(authorization.transport)
             raw.settimeout(CONNECT_TIMEOUT)
             logger.info("Incoming TCP connection from %s", address)
             sock = self._server_context.wrap_socket(raw, server_side=True)
@@ -295,6 +303,8 @@ class NetworkManager:
                     raise NetworkError(decision.get("reason", "Transfer declined"))
                 if not trusted and expected_public_key:
                     self.store.trust_peer(peer.device_id, peer.display_name, expected_public_key)
+                    if self.callbacks.trust_changed:
+                        self.callbacks.trust_changed()
                 phase = "file_stream"
                 sock.settimeout(STREAM_TIMEOUT)
                 self.callbacks.status("Accepted. Sending files...")
@@ -388,8 +398,12 @@ class NetworkManager:
             self.store.trust_peer(device_id, sender_name, sender_public_key,
                                   auto_accept=approval.always_accept)
             trusted = self.store.peer(device_id)
+            if self.callbacks.trust_changed:
+                self.callbacks.trust_changed()
         elif approval.always_accept:
             self.store.set_auto_accept(device_id, True)
+            if self.callbacks.trust_changed:
+                self.callbacks.trust_changed()
         required = sum(int(item["size"]) for item in offer["files"])
         if required > __import__("shutil").disk_usage(destination_dir).free:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Insufficient disk space"})

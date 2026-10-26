@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -64,6 +64,9 @@ class UiBridge(QObject):
     receive_finished = Signal()
     radio_event = Signal(object)
     discovery_changed = Signal(object)
+    transport_changed = Signal(object)
+    trust_changed = Signal()
+    radio_loaded = Signal(object)
 
     def _wait(self, signal: Signal, payload: object, timeout: int = 300):
         request = Request(payload)
@@ -106,6 +109,58 @@ class DropList(QListWidget):
         event.acceptProposedAction()
 
 
+class DeviceRow(QWidget):
+    """Friendly two-column device row with transport detail and a status badge."""
+
+    def __init__(self, name: str, detail: str, status: str, *, muted: bool = False):
+        super().__init__()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 9)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        name_label = QLabel(name)
+        name_label.setStyleSheet("font-size: 13px; font-weight: 650;")
+        if muted:
+            palette = name_label.palette()
+            palette.setColor(QPalette.WindowText, palette.color(QPalette.PlaceholderText))
+            name_label.setPalette(palette)
+        detail_label = QLabel(detail)
+        detail_label.setStyleSheet("font-size: 11px;")
+        detail_palette = detail_label.palette()
+        detail_palette.setColor(QPalette.WindowText, detail_palette.color(QPalette.PlaceholderText))
+        detail_label.setPalette(detail_palette)
+        text.addWidget(name_label)
+        text.addWidget(detail_label)
+        layout.addLayout(text)
+        layout.addStretch()
+        badge = QLabel(status)
+        dark_theme = self.palette().color(QPalette.Base).lightness() < 128
+        if status == "Online":
+            foreground = "#86efac" if dark_theme else "#15803d"
+            badge.setStyleSheet(
+                f"color: {foreground}; background: transparent; "
+                "font-size: 11px; font-weight: 650;"
+            )
+        else:
+            foreground = self.palette().color(QPalette.PlaceholderText).name()
+            badge.setStyleSheet(
+                f"color: {foreground}; background: transparent; "
+                "font-size: 11px; font-weight: 650;"
+            )
+        layout.addWidget(badge)
+
+
+class DeviceSectionHeader(QWidget):
+    def __init__(self, title: str):
+        super().__init__()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 4)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 12px; font-weight: 700;")
+        layout.addWidget(title_label)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -122,6 +177,8 @@ class MainWindow(QMainWindow):
             lambda _succeeded: None,
             receive_finished=self.bridge.receive_finished.emit,
             result_finished=self.bridge.transfer_result.emit,
+            route_started=self.bridge.transport_changed.emit,
+            trust_changed=self.bridge.trust_changed.emit,
         )
         self.network = NetworkManager(self.identity, self.store, callbacks)
         self.radio_peers: dict[str, dict] = {}
@@ -138,22 +195,19 @@ class MainWindow(QMainWindow):
         self.pending_radio_id: str | None = None
         self.pending_peer: DiscoveredPeer | None = None
         self.scan_pending = False
+        self.discovery: Discovery | None = None
+        self._closing = False
 
         self._build_ui()
         self._connect_signals()
 
-        # LAN discovery is independent of WinRT and starts before the radio.
-        self.discovery = Discovery(self.identity.device_id, self.identity.display_name,
-                                   self.network.port, self.identity.public_b64,
-                                   self.bridge.discovery_changed.emit,
-                                   frozenset({"lan", "wifi_direct"}) if sys.platform == "win32"
-                                   else frozenset({"lan"}))
+        # Zeroconf registration probes the network and must not delay the first paint.
+        threading.Thread(target=self._start_discovery, daemon=True,
+                         name="lan-discovery-start").start()
 
         self.radio = None
         self.scan_timer = None
         if sys.platform == "win32":
-            self.radio = NativeRadio(self.identity.device_id, self.network.port,
-                                     self.bridge.radio_event.emit, public_key=self.identity.public_b64)
             self.scan_timer = QTimer(self)
             self.scan_timer.setInterval(12000)
             self.scan_timer.timeout.connect(self.scan_radios)
@@ -161,10 +215,50 @@ class MainWindow(QMainWindow):
         self.expiry_timer.setInterval(5000)
         self.expiry_timer.timeout.connect(self.prune_nearby_devices)
         self.expiry_timer.start()
-        if self.radio and self.radio.start():
+        if sys.platform == "win32":
+            threading.Thread(target=self._load_radio, daemon=True,
+                             name="wifi-direct-load").start()
+
+    def _start_discovery(self) -> None:
+        try:
+            discovery = Discovery(
+                self.identity.device_id, self.identity.display_name,
+                self.network.port, self.identity.public_b64,
+                self._emit_discovery_change,
+                frozenset({"lan", "wifi_direct"}) if sys.platform == "win32"
+                else frozenset({"lan"}),
+            )
+            if self._closing:
+                discovery.close()
+            else:
+                self.discovery = discovery
+        except Exception as exc:
+            logger.exception("LAN discovery failed to start")
+            if not self._closing:
+                self.bridge.status_changed.emit(f"LAN discovery unavailable: {exc}")
+
+    def _emit_discovery_change(self, peers: list[DiscoveredPeer]) -> None:
+        if not self._closing:
+            self.bridge.discovery_changed.emit(peers)
+
+    def _load_radio(self) -> None:
+        radio = NativeRadio(self.identity.device_id, self.network.port,
+                            self.bridge.radio_event.emit, public_key=self.identity.public_b64)
+        if self._closing:
+            radio.close()
+        else:
+            self.bridge.radio_loaded.emit(radio)
+
+    @Slot(object)
+    def _finish_radio_load(self, radio) -> None:
+        if self._closing:
+            radio.close()
+            return
+        self.radio = radio
+        if radio.start():
             self.status.setText("Starting Wi-Fi Direct...")
             self.scan_timer.start()
-        elif self.radio:
+        else:
             self.status.setText("Wi-Fi Direct unavailable. Run: python -m secure_share.diagnostics")
 
     def _build_ui(self) -> None:
@@ -205,19 +299,20 @@ class MainWindow(QMainWindow):
         root.addLayout(device_header)
 
         self.devices = QListWidget()
-        self.devices.setMinimumHeight(210)
-        self.devices.setStyleSheet(
-            "QListWidget::item { padding: 12px; }"
-            "QListWidget::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }"
-            "QListWidget::item:selected:!active { background: #1d4ed8; color: #ffffff; }"
-        )
+        self.devices.setMinimumHeight(260)
+        self._apply_device_list_theme()
         self.devices.setContextMenuPolicy(Qt.CustomContextMenu)
         root.addWidget(self.devices)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        root.addWidget(self.progress)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self.progress, 1)
+        self.transport_badge = QLabel()
+        self.transport_badge.hide()
+        progress_row.addWidget(self.transport_badge)
+        root.addLayout(progress_row)
         self.status = QLabel("No internet or cloud service is used.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -241,12 +336,52 @@ class MainWindow(QMainWindow):
         self.bridge.receive_finished.connect(self.finish_receive)
         self.bridge.radio_event.connect(self.handle_radio_event)
         self.bridge.discovery_changed.connect(self.handle_discovery)
+        self.bridge.transport_changed.connect(self.set_transfer_transport)
+        self.bridge.trust_changed.connect(self.refresh_nearby_devices)
+        self.bridge.radio_loaded.connect(self._finish_radio_load)
         self.file_list.files_dropped.connect(self.add_paths)
         self.add_button.clicked.connect(self.pick_files)
         self.remove_button.clicked.connect(self.remove_files)
         self.refresh_button.clicked.connect(self.refresh_devices)
         self.devices.customContextMenuRequested.connect(self.show_device_menu)
         self.devices.itemClicked.connect(self.device_clicked)
+
+    def _apply_device_list_theme(self) -> None:
+        palette = self.palette()
+        border = palette.color(QPalette.Mid).name()
+        hover = palette.color(QPalette.AlternateBase).name()
+        selected = palette.color(QPalette.Highlight).name()
+        selected_text = palette.color(QPalette.HighlightedText).name()
+        self.devices.setStyleSheet(
+            f"QListWidget {{ border: 1px solid {border}; border-radius: 9px; padding: 5px; }}"
+            "QListWidget::item { border-radius: 7px; margin: 2px; }"
+            f"QListWidget::item:hover {{ background: {hover}; }}"
+            f"QListWidget::item:selected {{ background: {selected}; color: {selected_text}; }}"
+            f"QListWidget::item:selected:!active {{ background: {selected}; color: {selected_text}; }}"
+        )
+
+    @Slot(object)
+    def set_transfer_transport(self, transport) -> None:
+        if transport is None:
+            self.transport_badge.clear()
+            self.transport_badge.hide()
+            return
+        value = getattr(transport, "value", str(transport))
+        wifi_direct = value == Transport.WIFI_DIRECT.value
+        label = "Wi-Fi Direct" if wifi_direct else "LAN"
+        dark_theme = self.palette().color(QPalette.Base).lightness() < 128
+        if wifi_direct:
+            foreground, background = (("#e9d5ff", "#581c87") if dark_theme
+                                      else ("#6b21a8", "#f3e8ff"))
+        else:
+            foreground, background = (("#bfdbfe", "#1e3a8a") if dark_theme
+                                      else ("#1e40af", "#dbeafe"))
+        self.transport_badge.setText(label)
+        self.transport_badge.setStyleSheet(
+            f"color: {foreground}; background: {background}; border-radius: 9px; "
+            "padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        )
+        self.transport_badge.show()
 
     @Slot(object)
     def add_paths(self, paths: list[Path]) -> None:
@@ -283,7 +418,7 @@ class MainWindow(QMainWindow):
         revoke = menu.addAction("Revoke trust")
         if menu.exec(self.devices.mapToGlobal(position)) is not revoke:
             return
-        device_id = item.data(DEVICE_DATA_ROLE)
+        device_id = item.data(DEVICE_ID_ROLE)
         if not device_id:
             return
         answer = QMessageBox.question(
@@ -293,7 +428,7 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
-        self.store.revoke_trust(str(item.data(DEVICE_ID_ROLE)))
+        self.store.revoke_trust(str(device_id))
         self.status.setText("Device trust revoked. Transfer history was kept.")
         self.refresh_nearby_devices()
 
@@ -301,9 +436,8 @@ class MainWindow(QMainWindow):
         if self.workflow_active or self.receiving:
             return
         self.status.setText("Refreshing nearby devices...")
-        if hasattr(self, "discovery"):
-            self.discovery.refresh_registration()
-            self.discovery.prune()
+        if self.discovery:
+            self.discovery.refresh()
         self.refresh_nearby_devices()
         if self.radio and self.radio_ready and not self.scan_pending:
             self.scan_radios()
@@ -331,8 +465,9 @@ class MainWindow(QMainWindow):
                 self.status.setText("Device no longer available. Waiting for a fresh LAN announcement.")
                 return
             self.workflow_active, self.send_started = True, True
+            self.set_transfer_transport(Transport.LAN)
             self.attempt_id = uuid.uuid4().hex
-            observed = self.discovery.routes_for(peer.device_id) if hasattr(self, "discovery") else [peer]
+            observed = self.discovery.routes_for(peer.device_id) if self.discovery else [peer]
             by_endpoint = {f"{route.host}:{route.port}": route
                            for route in [peer, *(item for item in observed if item.host != peer.host)]}
             ranked = self.store.rank_endpoints(peer.device_id, list(by_endpoint))
@@ -351,6 +486,7 @@ class MainWindow(QMainWindow):
             self.status.setText("Device no longer available. Waiting for a fresh scan.")
             return
         self.attempt_id = uuid.uuid4().hex
+        self.set_transfer_transport(Transport.WIFI_DIRECT)
         self.selected_endpoint = dict(peer)
         self.pending_radio_id = radio_id
         self.pending_peer = None
@@ -472,60 +608,90 @@ class MainWindow(QMainWindow):
         self.device_instruction.setStyleSheet(
             "font-weight: 650; color: #2563eb" if files_ready else "color: #666"
         )
+        trusted_by_id = {peer["device_id"]: peer for peer in self.store.peers()}
+        online: dict[str, dict] = {}
         lan_ids = set()
-        for device_id, peer in sorted(getattr(self, "lan_peers", {}).items(), key=lambda entry: entry[1].display_name):
-            trusted = bool(self.store.peer(device_id))
-            trust_label = "  |  Trusted" if trusted else ""
-            item = QListWidgetItem(f"{peer.display_name}{trust_label}  |  Same network")
-            item.setData(DEVICE_DATA_ROLE, f"lan:{device_id}")
-            item.setData(DEVICE_TRUSTED_ROLE, trusted)
-            item.setData(DEVICE_ONLINE_ROLE, True)
-            item.setData(DEVICE_ID_ROLE, device_id)
-            if not files_ready:
-                item.setForeground(QColor("#8a8f98"))
-                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-                item.setToolTip("Add one or more files before selecting a device")
-            self.devices.addItem(item)
+        for device_id, peer in getattr(self, "lan_peers", {}).items():
+            online[device_id] = {
+                "device_id": device_id, "name": peer.display_name,
+                "detail": "Same network (LAN)", "target": f"lan:{device_id}",
+            }
             lan_ids.add(device_id)
         for radio_id, peer in sorted(self.radio_peers.items(), key=lambda entry: entry[1].get("name", "")):
             if peer.get("device_id") in lan_ids:
                 continue
             device_id = peer.get("device_id")
-            trusted = bool(device_id and self.store.peer(device_id))
-            trust_label = "  |  Trusted" if trusted else ""
-            item = QListWidgetItem(f"{peer.get('name') or 'Nearby computer'}{trust_label}  |  Wi-Fi Direct")
-            item.setData(DEVICE_DATA_ROLE, radio_id)
-            item.setData(DEVICE_TRUSTED_ROLE, trusted)
-            item.setData(DEVICE_ONLINE_ROLE, True)
-            item.setData(DEVICE_ID_ROLE, device_id)
-            if not files_ready:
-                item.setForeground(QColor("#8a8f98"))
-                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-                item.setToolTip("Add one or more files before selecting a device")
-            self.devices.addItem(item)
-        online_ids = lan_ids | {peer.get("device_id") for peer in self.radio_peers.values()}
-        recent = [peer for peer in self.store.peers()
-                  if peer["device_id"] not in online_ids and peer.get("last_seen")]
-        for peer in sorted(recent, key=lambda value: value.get("last_seen") or "", reverse=True):
-            item = QListWidgetItem(f"{peer['name']}  |  Trusted  |  Offline")
-            item.setData(DEVICE_TRUSTED_ROLE, True)
-            item.setData(DEVICE_ONLINE_ROLE, False)
-            item.setData(DEVICE_ID_ROLE, peer["device_id"])
-            item.setForeground(QColor("#8a8f98"))
+            if device_id:
+                online[device_id] = {
+                    "device_id": device_id, "name": peer.get("name") or "Nearby computer",
+                    "detail": "Nearby connection (Wi-Fi Direct)", "target": radio_id,
+                }
+
+        trusted_rows = []
+        new_rows = []
+        for device_id, peer in online.items():
+            row = {**peer, "online": True, "trusted": device_id in trusted_by_id}
+            (trusted_rows if row["trusted"] else new_rows).append(row)
+        for device_id, peer in trusted_by_id.items():
+            if device_id not in online:
+                trusted_rows.append({
+                    "device_id": device_id, "name": peer["name"], "detail": "Last seen previously",
+                    "target": None, "online": False, "trusted": True,
+                })
+
+        self._add_device_section("Trusted Devices")
+        if trusted_rows:
+            for row in sorted(trusted_rows, key=lambda value: (not value["online"], value["name"].casefold())):
+                self._add_device_row(row, files_ready)
+        else:
+            self._add_empty_device_row("No trusted devices yet")
+
+        self._add_device_section("New Devices")
+        if new_rows:
+            for row in sorted(new_rows, key=lambda value: value["name"].casefold()):
+                self._add_device_row(row, files_ready)
+        else:
+            self._add_empty_device_row("No new devices online")
+
+    def _add_device_section(self, title: str) -> None:
+        item = QListWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+        widget = DeviceSectionHeader(title)
+        item.setSizeHint(widget.sizeHint())
+        self.devices.addItem(item)
+        self.devices.setItemWidget(item, widget)
+
+    def _add_empty_device_row(self, message: str) -> None:
+        item = QListWidgetItem(message)
+        item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+        item.setForeground(QColor("#9ca3af"))
+        self.devices.addItem(item)
+
+    def _add_device_row(self, row: dict, files_ready: bool) -> None:
+        online = bool(row["online"])
+        item = QListWidgetItem()
+        item.setData(DEVICE_DATA_ROLE, row["target"])
+        item.setData(DEVICE_TRUSTED_ROLE, row["trusted"])
+        item.setData(DEVICE_ONLINE_ROLE, online)
+        item.setData(DEVICE_ID_ROLE, row["device_id"])
+        if not online:
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
             item.setToolTip("This trusted device is currently offline")
-            self.devices.addItem(item)
-        if not self.radio_peers and not getattr(self, "lan_peers", {}) and not recent:
-            item = QListWidgetItem("No nearby computers yet. Keep Wi-Fi and this app on on both PCs.")
-            item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.devices.addItem(item)
+        elif not files_ready:
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            item.setToolTip("Add one or more files before selecting a device")
+        widget = DeviceRow(row["name"], row["detail"], "Online" if online else "Offline",
+                           muted=not online or not files_ready)
+        item.setSizeHint(widget.sizeHint())
+        self.devices.addItem(item)
+        self.devices.setItemWidget(item, widget)
 
     def prune_nearby_devices(self) -> None:
         if self.workflow_active or self.receiving:
             return
         cutoff = time.monotonic() - 60
         self.radio_peers = {key: peer for key, peer in self.radio_peers.items() if peer["seen_at"] >= cutoff}
-        if hasattr(self, "discovery"):
+        if self.discovery:
             self.discovery.refresh_registration()
             self.discovery.prune()
         self.refresh_nearby_devices()
@@ -537,7 +703,7 @@ class MainWindow(QMainWindow):
             self.store.observe_peer(peer.device_id, ",".join(sorted(peer.capabilities)))
             # Discovery metadata is necessary but transfer authentication still
             # occurs through signed offers and pinned TLS.
-            routes = self.discovery.routes_for(peer.device_id) if hasattr(self, "discovery") else [peer]
+            routes = self.discovery.routes_for(peer.device_id) if self.discovery else [peer]
             for route in routes:
                 self.network.authorize_route(route.host, Transport.LAN,
                                              f"mdns:{peer.device_id}:{route.host}", ttl=240)
@@ -665,6 +831,7 @@ class MainWindow(QMainWindow):
                 self.pending_radio_id = radio_id
                 self.selected_endpoint = dict(peer)
                 self.send_started = False
+                self.set_transfer_transport(Transport.WIFI_DIRECT)
                 self.status.setText("LAN unavailable; trying Wi-Fi Direct...")
                 try:
                     self.radio.connect_wifi_direct(radio_id, self.attempt_id)
@@ -688,6 +855,7 @@ class MainWindow(QMainWindow):
         self.attempt_id = None
         self.selected_endpoint = None
         self.send_started = False
+        self.set_transfer_transport(None)
         self.progress.setRange(0, 100)
         self.set_busy(False)
         if reset_link:
@@ -702,12 +870,16 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(2000, self.scan_timer.start)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._closing = True
         if self.scan_timer:
             self.scan_timer.stop()
         self.expiry_timer.stop()
         if self.radio:
             self.radio.close()
-        self.discovery.close()
+        discovery, self.discovery = self.discovery, None
+        if discovery:
+            threading.Thread(target=discovery.close, daemon=True,
+                             name="lan-discovery-close").start()
         self.network.close()
         self.store.close()
         event.accept()
