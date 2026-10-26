@@ -84,14 +84,27 @@ def peers_from_service(info: ServiceInfo, own_device_id: str, now: float | None 
     except (KeyError, TypeError, ValueError, UnicodeError):
         return []
     result, seen = [], set()
+    observed_at = now if now is not None else time.monotonic()
     for address in info.parsed_scoped_addresses():
         address = address.split("%", 1)[0]
         if address in seen or not _usable_ipv4(address, remote=True):
             continue
         seen.add(address)
         result.append(DiscoveredPeer(info.name, address, int(info.port), device_id, display_name,
-                                     public_key, version, Transport.LAN, None, now or time.monotonic()))
+                                     public_key, version, Transport.LAN, None, observed_at))
     return result
+
+
+def _route_score(peer: DiscoveredPeer, local_addresses: list[str]) -> tuple[int, int, float]:
+    remote = ipaddress.IPv4Address(peer.host)
+    prefix_match = 0
+    for address in local_addresses:
+        local = ipaddress.IPv4Address(address)
+        difference = int(local) ^ int(remote)
+        prefix_match = max(prefix_match, 32 if difference == 0 else 32 - difference.bit_length())
+    # A routable private address on the closest apparent subnet is preferred
+    # over APIPA/link-local and unrelated virtual adapter addresses.
+    return (0 if remote.is_link_local else 1, prefix_match, peer.fresh_at)
 
 
 class _Listener(ServiceListener):
@@ -148,9 +161,11 @@ class Discovery:
 
     def _snapshot(self) -> list[DiscoveredPeer]:
         latest: dict[str, DiscoveredPeer] = {}
+        local_addresses = [socket.inet_ntoa(value) for value in _ipv4_addresses()]
         for services in self.peers.values():
             for peer in services.values():
-                if peer.device_id not in latest or peer.fresh_at > latest[peer.device_id].fresh_at:
+                if (peer.device_id not in latest
+                        or _route_score(peer, local_addresses) > _route_score(latest[peer.device_id], local_addresses)):
                     latest[peer.device_id] = peer
         return list(latest.values())
 
