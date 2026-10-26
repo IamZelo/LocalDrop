@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 
 import keyring
@@ -30,7 +31,26 @@ class LocalStore:
             );
             """
         )
+        self._migrate()
         self.db.commit()
+
+    def _migrate(self) -> None:
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(peers)")}
+        additions = {
+            "capabilities": "TEXT NOT NULL DEFAULT 'lan'",
+            "last_seen": "TEXT",
+            "auto_accept": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE peers ADD COLUMN {name} {declaration}")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS route_stats (
+            device_id TEXT NOT NULL, transport TEXT NOT NULL, endpoint TEXT NOT NULL,
+            successes INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0, latency_total REAL NOT NULL DEFAULT 0,
+            last_attempt TEXT NOT NULL, cooldown_until REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY(device_id, transport, endpoint)
+        )""")
 
     def _load_key(self, device_id: str) -> bytes:
         account = f"{device_id}:history"
@@ -53,24 +73,81 @@ class LocalStore:
                 pass
             return key
 
-    def trust_peer(self, device_id: str, name: str, public_key: str) -> None:
+    def trust_peer(self, device_id: str, name: str, public_key: str, *,
+                   capabilities: str = "lan", auto_accept: bool = False) -> None:
         encrypted = self.cipher.encrypt(name.encode())
         with self.lock:
             self.db.execute(
-                "INSERT INTO peers(device_id,public_key,encrypted_name,paired_at,blocked) VALUES(?,?,?,?,0) "
-                "ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, encrypted_name=excluded.encrypted_name, blocked=0",
-                (device_id, public_key, encrypted, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO peers(device_id,public_key,encrypted_name,paired_at,blocked,capabilities,last_seen,auto_accept) VALUES(?,?,?,?,0,?,?,?) "
+                "ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, encrypted_name=excluded.encrypted_name, blocked=0, capabilities=?, last_seen=?, auto_accept=?",
+                (device_id, public_key, encrypted, datetime.now(timezone.utc).isoformat(), capabilities,
+                 datetime.now(timezone.utc).isoformat(), int(auto_accept), capabilities,
+                 datetime.now(timezone.utc).isoformat(), int(auto_accept)),
             )
             self.db.commit()
 
     def peer(self, device_id: str) -> dict | None:
         with self.lock:
             row = self.db.execute(
-                "SELECT device_id,public_key,encrypted_name,blocked FROM peers WHERE device_id=?", (device_id,)
+                "SELECT device_id,public_key,encrypted_name,blocked,capabilities,last_seen,auto_accept FROM peers WHERE device_id=?", (device_id,)
             ).fetchone()
         if not row:
             return None
-        return {"device_id": row[0], "public_key": row[1], "name": self.cipher.decrypt(row[2]).decode(), "blocked": bool(row[3])}
+        return {"device_id": row[0], "public_key": row[1], "name": self.cipher.decrypt(row[2]).decode(),
+                "blocked": bool(row[3]), "capabilities": row[4] or "lan", "last_seen": row[5],
+                "auto_accept": bool(row[6])}
+
+    def observe_peer(self, device_id: str, capabilities: str) -> None:
+        with self.lock:
+            self.db.execute("UPDATE peers SET capabilities=?, last_seen=? WHERE device_id=?",
+                            (capabilities, datetime.now(timezone.utc).isoformat(), device_id))
+            self.db.commit()
+
+    def set_auto_accept(self, device_id: str, enabled: bool) -> None:
+        with self.lock:
+            self.db.execute("UPDATE peers SET auto_accept=? WHERE device_id=?", (int(enabled), device_id))
+            self.db.commit()
+
+    def set_blocked(self, device_id: str, blocked: bool) -> None:
+        with self.lock:
+            self.db.execute("UPDATE peers SET blocked=?, auto_accept=CASE WHEN ? THEN 0 ELSE auto_accept END WHERE device_id=?",
+                            (int(blocked), int(blocked), device_id))
+            self.db.commit()
+
+    def record_route(self, device_id: str, transport: str, endpoint: str, duration: float,
+                     succeeded: bool) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        cooldown = 0.0 if succeeded else time.time() + 30
+        with self.lock:
+            self.db.execute("""INSERT INTO route_stats VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(device_id,transport,endpoint) DO UPDATE SET
+                successes=successes+excluded.successes, failures=failures+excluded.failures,
+                consecutive_failures=CASE WHEN excluded.successes=1 THEN 0 ELSE consecutive_failures+1 END,
+                latency_total=latency_total+excluded.latency_total,last_attempt=excluded.last_attempt,
+                cooldown_until=excluded.cooldown_until""",
+                (device_id, transport, endpoint, int(succeeded), int(not succeeded),
+                 0 if succeeded else 1, duration if succeeded else 0, now, cooldown))
+            self.db.commit()
+
+    def route_stats(self, device_id: str) -> list[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT transport,endpoint,successes,failures,consecutive_failures,latency_total,cooldown_until FROM route_stats WHERE device_id=?", (device_id,)).fetchall()
+        return [{"transport": r[0], "endpoint": r[1], "successes": r[2], "failures": r[3],
+                 "consecutive_failures": r[4], "average_latency": r[5] / r[2] if r[2] else None,
+                 "cooldown_until": r[6]} for r in rows]
+
+    def rank_endpoints(self, device_id: str, endpoints: list[str], now: float | None = None) -> list[str]:
+        """Prefer proven endpoints and leave recently failed ones until last."""
+        current = time.time() if now is None else now
+        stats = {row["endpoint"]: row for row in self.route_stats(device_id)}
+        def score(endpoint: str) -> tuple[bool, float, int, float]:
+            row = stats.get(endpoint, {})
+            cooled = float(row.get("cooldown_until", 0)) > current
+            attempts = int(row.get("successes", 0)) + int(row.get("failures", 0))
+            reliability = int(row.get("successes", 0)) / attempts if attempts else 0.5
+            latency = row.get("average_latency")
+            return cooled, -reliability, int(row.get("consecutive_failures", 0)), latency or float("inf")
+        return sorted(endpoints, key=score)
 
     def peers(self) -> list[dict]:
         with self.lock:
@@ -81,6 +158,13 @@ class LocalStore:
         with self.lock:
             self.db.execute("DELETE FROM peers WHERE device_id=?", (device_id,))
             self.db.execute("DELETE FROM transfers WHERE peer_id=?", (device_id,))
+            self.db.execute("DELETE FROM route_stats WHERE device_id=?", (device_id,))
+            self.db.commit()
+
+    def revoke_trust(self, device_id: str) -> None:
+        """Remove identity pinning and auto-accept without erasing history or route learning."""
+        with self.lock:
+            self.db.execute("DELETE FROM peers WHERE device_id=?", (device_id,))
             self.db.commit()
 
     def record_transfer(self, transfer_id: str, peer_id: str, direction: str, details: dict, status: str) -> None:

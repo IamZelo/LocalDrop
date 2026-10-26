@@ -1,44 +1,51 @@
-import sys
+import asyncio
 import unittest
+from unittest.mock import Mock, AsyncMock
+from radio_test_support import load
 
-from secure_share.winrt_radio import (
-    PythonWinRTRadio,
-    RadioOperationError,
-    _decode_hostname,
-    _encode_hostname,
-    _exception_event,
-)
+radio_module = load("winrt_radio")
 
+class WinRTRadioTests(unittest.IsolatedAsyncioTestCase):
+    def test_no_bluetooth_packages_required(self):
+        self.assertFalse(any("bluetooth" in name for name in radio_module.REQUIRED_MODULES))
 
-@unittest.skipUnless(sys.platform == "win32", "WinRT tests require Windows")
-class WinRTRadioTests(unittest.TestCase):
-    def test_common_windows_hostname_fits_ble_payload(self):
-        encoded = _encode_hostname("DESKTOP-CS6DRQK")
-        self.assertLessEqual(len(encoded), 10)
-        self.assertEqual(_decode_hostname(encoded), "DESKTOP-CS6DRQK")
-
-    def test_general_hostname_is_safely_truncated(self):
-        encoded = _encode_hostname("engineering-workstation")
-        self.assertLessEqual(len(encoded), 10)
-        self.assertEqual(_decode_hostname(encoded), "engineeri")
-
-    def test_structured_error_contains_phase_hresult_and_traceback(self):
-        try:
-            error = RadioOperationError("windows_pairing", "denied", status="ACCESS_DENIED")
-            error.hresult = -2147024891
-            raise error
-        except RadioOperationError as exc:
-            event = _exception_event("bluetooth_metadata_error", exc, "ABC12345")
-        self.assertEqual(event["phase"], "windows_pairing")
-        self.assertEqual(event["status"], "ACCESS_DENIED")
-        self.assertEqual(event["hresult"], "0x80070005 (-2147024891)")
-        self.assertIn("RadioOperationError", event["traceback"])
-
-    def test_wifi_direct_is_locked_before_bluetooth_metadata(self):
-        radio = PythonWinRTRadio("device", 43123, lambda _event: None)
-        with self.assertRaisesRegex(RuntimeError, "Bluetooth bootstrap metadata"):
+    def test_startup_required_for_scanning(self):
+        radio = radio_module.PythonWinRTRadio("device", 43123, Mock())
+        with self.assertRaisesRegex(RuntimeError, "not ready"):
             radio.scan_wifi_direct()
 
+    def test_skipped_scan_always_completes(self):
+        callback = Mock()
+        radio = radio_module.PythonWinRTRadio("device", 43123, callback)
+        radio.started = True
+        radio._scanning = True
+        radio.scan_wifi_direct()
+        self.assertEqual(callback.call_args.args[0]["event"], "wifi_direct_scan_complete")
 
-if __name__ == "__main__":
-    unittest.main()
+    async def test_startup_uses_only_wifi(self):
+        events = []
+        radio = radio_module.PythonWinRTRadio("device", 43123, events.append)
+        radio._start_wifi_direct = Mock(side_effect=lambda: radio.publisher_ready.set())
+        task = asyncio.create_task(radio._main())
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertTrue(radio.started)
+        radio._start_wifi_direct.assert_called_once()
+        self.assertEqual(events[0]["event"], "ready")
+        radio.stop_event.set()
+        await task
+
+    async def test_connection_timeout_has_attempt_id(self):
+        events = []
+        radio = radio_module.PythonWinRTRadio("device", 43123, events.append)
+        radio._connect_wifi_direct = AsyncMock(side_effect=TimeoutError)
+        await radio._connect_attempt("endpoint", "attempt")
+        self.assertEqual(events[0]["attempt_id"], "attempt")
+        self.assertEqual(events[0]["phase"], "wifi_direct_connect")
+
+    def test_structured_error_contains_hresult(self):
+        error = radio_module.RadioOperationError("connect", "denied", status="ACCESS_DENIED")
+        error.hresult = -2147024891
+        event = radio_module._exception_event("wifi_direct_error", error, "attempt")
+        self.assertEqual(event["hresult"], "0x80070005 (-2147024891)")
+        self.assertEqual(event["attempt_id"], "attempt")

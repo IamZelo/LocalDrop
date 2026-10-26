@@ -5,21 +5,23 @@ import logging
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QMenu,
+    QCheckBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -27,14 +29,23 @@ from PySide6.QtWidgets import (
 )
 from qasync import QEventLoop
 
-from .discovery import DiscoveredPeer, Discovery
+from .discovery import DiscoveredPeer
+try:  # lightweight test boundaries may expose only the peer record
+    from .discovery import Discovery
+except ImportError:  # pragma: no cover - used by isolated UI tests
+    Discovery = None  # type: ignore[misc,assignment]
+from .connectivity import Transport
 from .identity import load_or_create_identity, unb64
-from .native_radio import NativeRadio
-from .network import InteractionCallbacks, NetworkManager
-from .protocol import CODE_ALPHABET
+if sys.platform == "win32":
+    from .native_radio import NativeRadio
+from .network import InteractionCallbacks, NetworkManager, TransferApproval
 from .storage import LocalStore
 
 logger = logging.getLogger("secure_share.app")
+DEVICE_DATA_ROLE = Qt.UserRole
+DEVICE_TRUSTED_ROLE = Qt.UserRole + 1
+DEVICE_ONLINE_ROLE = Qt.UserRole + 2
+DEVICE_ID_ROLE = Qt.UserRole + 3
 
 
 @dataclass
@@ -47,31 +58,29 @@ class Request:
 class UiBridge(QObject):
     status_changed = Signal(str)
     progress_changed = Signal(str, int)
-    discovery_changed = Signal(object)
-    pairing_display = Signal(object)
-    pairing_input = Signal(object)
     transfer_offer = Signal(object)
-    paired_changed = Signal()
-    pairing_finished = Signal()
     transfer_finished = Signal(bool)
+    transfer_result = Signal(object)
+    receive_finished = Signal()
     radio_event = Signal(object)
+    discovery_changed = Signal(object)
+    transport_changed = Signal(object)
+    trust_changed = Signal()
+    radio_loaded = Signal(object)
 
     def _wait(self, signal: Signal, payload: object, timeout: int = 300):
         request = Request(payload)
         signal.emit(request)
-        request.event.wait(timeout)
+        if not request.event.wait(timeout):
+            request.event.set()
+            return None
         return request.result
 
-    def show_pairing_code(self, address: str, code: str) -> bool:
-        return bool(self._wait(self.pairing_display, (address, code)))
 
-    def request_pairing_code(self, name: str) -> str | None:
-        result = self._wait(self.pairing_input, name)
-        return str(result) if result else None
 
-    def accept_transfer(self, peer: dict, files: list[dict]) -> str | None:
+    def accept_transfer(self, peer: dict, files: list[dict]) -> TransferApproval | None:
         result = self._wait(self.transfer_offer, (peer, files))
-        return str(result) if result else None
+        return result if isinstance(result, TransferApproval) else None
 
 
 class DropList(QListWidget):
@@ -100,6 +109,58 @@ class DropList(QListWidget):
         event.acceptProposedAction()
 
 
+class DeviceRow(QWidget):
+    """Friendly two-column device row with transport detail and a status badge."""
+
+    def __init__(self, name: str, detail: str, status: str, *, muted: bool = False):
+        super().__init__()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 9)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        name_label = QLabel(name)
+        name_label.setStyleSheet("font-size: 13px; font-weight: 650;")
+        if muted:
+            palette = name_label.palette()
+            palette.setColor(QPalette.WindowText, palette.color(QPalette.PlaceholderText))
+            name_label.setPalette(palette)
+        detail_label = QLabel(detail)
+        detail_label.setStyleSheet("font-size: 11px;")
+        detail_palette = detail_label.palette()
+        detail_palette.setColor(QPalette.WindowText, detail_palette.color(QPalette.PlaceholderText))
+        detail_label.setPalette(detail_palette)
+        text.addWidget(name_label)
+        text.addWidget(detail_label)
+        layout.addLayout(text)
+        layout.addStretch()
+        badge = QLabel(status)
+        dark_theme = self.palette().color(QPalette.Base).lightness() < 128
+        if status == "Online":
+            foreground = "#86efac" if dark_theme else "#15803d"
+            badge.setStyleSheet(
+                f"color: {foreground}; background: transparent; "
+                "font-size: 11px; font-weight: 650;"
+            )
+        else:
+            foreground = self.palette().color(QPalette.PlaceholderText).name()
+            badge.setStyleSheet(
+                f"color: {foreground}; background: transparent; "
+                "font-size: 11px; font-weight: 650;"
+            )
+        layout.addWidget(badge)
+
+
+class DeviceSectionHeader(QWidget):
+    def __init__(self, title: str):
+        super().__init__()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 4)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 12px; font-weight: 700;")
+        layout.addWidget(title_label)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -110,56 +171,95 @@ class MainWindow(QMainWindow):
         self.store = LocalStore(self.identity.device_id)
         self.bridge = UiBridge()
         callbacks = InteractionCallbacks(
-            self.bridge.show_pairing_code,
-            self.bridge.request_pairing_code,
             self.bridge.accept_transfer,
             self.bridge.status_changed.emit,
             self.bridge.progress_changed.emit,
-            self.bridge.paired_changed.emit,
-            self.bridge.pairing_finished.emit,
-            self.bridge.transfer_finished.emit,
+            lambda _succeeded: None,
+            receive_finished=self.bridge.receive_finished.emit,
+            result_finished=self.bridge.transfer_result.emit,
+            route_started=self.bridge.transport_changed.emit,
+            trust_changed=self.bridge.trust_changed.emit,
         )
         self.network = NetworkManager(self.identity, self.store, callbacks)
-        self.discovery = Discovery(
-            self.identity.device_id,
-            self.identity.display_name,
-            self.network.port,
-            self.bridge.discovery_changed.emit,
-        )
-
-        self.lan_peers: dict[str, DiscoveredPeer] = {}
         self.radio_peers: dict[str, dict] = {}
-        self.ble_tokens: set[str] = set()
-        self.ble_peers: dict[str, dict] = {}
-        self.ble_name_index: dict[str, str] = {}
+        self.lan_peers: dict[str, DiscoveredPeer] = {}
+        self.radio_ready = False
+        self.receiving = False
+        self.incoming_radio_id = None
+        self.receive_offer_active = False
+        self.attempt_id = None
+        self.selected_endpoint = None
+        self.send_started = False
         self.paths: list[Path] = []
         self.workflow_active = False
-        self.pending_ble_token: str | None = None
         self.pending_radio_id: str | None = None
         self.pending_peer: DiscoveredPeer | None = None
         self.scan_pending = False
+        self.discovery: Discovery | None = None
+        self._closing = False
 
         self._build_ui()
         self._connect_signals()
 
-        self.radio = NativeRadio(
-            self.identity.device_id,
-            self.network.port,
-            self.bridge.radio_event.emit,
-            public_key=self.identity.public_b64,
-        )
-        self.scan_timer = QTimer(self)
-        self.scan_timer.setInterval(12000)
-        self.scan_timer.timeout.connect(self.scan_radios)
-        self.ble_expiry_timer = QTimer(self)
-        self.ble_expiry_timer.setInterval(5000)
-        self.ble_expiry_timer.timeout.connect(self.prune_nearby_devices)
-        self.ble_expiry_timer.start()
-        if self.radio.start():
-            self.status.setText("Starting Bluetooth discovery…")
+        # Zeroconf registration probes the network and must not delay the first paint.
+        threading.Thread(target=self._start_discovery, daemon=True,
+                         name="lan-discovery-start").start()
+
+        self.radio = None
+        self.scan_timer = None
+        if sys.platform == "win32":
+            self.scan_timer = QTimer(self)
+            self.scan_timer.setInterval(12000)
+            self.scan_timer.timeout.connect(self.scan_radios)
+        self.expiry_timer = QTimer(self)
+        self.expiry_timer.setInterval(5000)
+        self.expiry_timer.timeout.connect(self.prune_nearby_devices)
+        self.expiry_timer.start()
+        if sys.platform == "win32":
+            threading.Thread(target=self._load_radio, daemon=True,
+                             name="wifi-direct-load").start()
+
+    def _start_discovery(self) -> None:
+        try:
+            discovery = Discovery(
+                self.identity.device_id, self.identity.display_name,
+                self.network.port, self.identity.public_b64,
+                self._emit_discovery_change,
+                frozenset({"lan", "wifi_direct"}) if sys.platform == "win32"
+                else frozenset({"lan"}),
+            )
+            if self._closing:
+                discovery.close()
+            else:
+                self.discovery = discovery
+        except Exception as exc:
+            logger.exception("LAN discovery failed to start")
+            if not self._closing:
+                self.bridge.status_changed.emit(f"LAN discovery unavailable: {exc}")
+
+    def _emit_discovery_change(self, peers: list[DiscoveredPeer]) -> None:
+        if not self._closing:
+            self.bridge.discovery_changed.emit(peers)
+
+    def _load_radio(self) -> None:
+        radio = NativeRadio(self.identity.device_id, self.network.port,
+                            self.bridge.radio_event.emit, public_key=self.identity.public_b64)
+        if self._closing:
+            radio.close()
+        else:
+            self.bridge.radio_loaded.emit(radio)
+
+    @Slot(object)
+    def _finish_radio_load(self, radio) -> None:
+        if self._closing:
+            radio.close()
+            return
+        self.radio = radio
+        if radio.start():
+            self.status.setText("Starting Wi-Fi Direct...")
             self.scan_timer.start()
         else:
-            self.status.setText("Bluetooth radio unavailable. Run: python -m secure_share.diagnostics")
+            self.status.setText("Wi-Fi Direct unavailable. Run: python -m secure_share.diagnostics")
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -170,7 +270,8 @@ class MainWindow(QMainWindow):
         title = QLabel("Local Secure Share")
         title.setStyleSheet("font-size: 25px; font-weight: 650")
         root.addWidget(title)
-        subtitle = QLabel(f"{self.identity.display_name} · Bluetooth discovery · Direct Wi-Fi transfer")
+        mode = "LAN + Wi-Fi Direct" if sys.platform == "win32" else "LAN only"
+        subtitle = QLabel(f"{self.identity.display_name} | {mode}")
         subtitle.setStyleSheet("color: #666")
         root.addWidget(subtitle)
 
@@ -187,22 +288,31 @@ class MainWindow(QMainWindow):
         root.addLayout(file_actions)
 
         device_header = QHBoxLayout()
-        device_header.addWidget(QLabel("2. Click a nearby device to send"))
+        self.device_instruction = QLabel("2. Add files first, then select a device")
+        device_header.addWidget(self.device_instruction)
+        self.refresh_button = QPushButton("Refresh")
+        device_header.addWidget(self.refresh_button)
         device_header.addStretch()
-        self.ble_status = QLabel("Bluetooth starting…")
-        self.ble_status.setStyleSheet("color: #666")
-        device_header.addWidget(self.ble_status)
+        self.radio_status = QLabel("Wi-Fi Direct starting..." if sys.platform == "win32" else "LAN only")
+        self.radio_status.setStyleSheet("color: #666")
+        device_header.addWidget(self.radio_status)
         root.addLayout(device_header)
 
         self.devices = QListWidget()
-        self.devices.setMinimumHeight(210)
-        self.devices.setStyleSheet("QListWidget::item { padding: 12px; } QListWidget::item:selected { border-radius: 6px; }")
+        self.devices.setMinimumHeight(260)
+        self._apply_device_list_theme()
+        self.devices.setContextMenuPolicy(Qt.CustomContextMenu)
         root.addWidget(self.devices)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        root.addWidget(self.progress)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self.progress, 1)
+        self.transport_badge = QLabel()
+        self.transport_badge.hide()
+        progress_row.addWidget(self.transport_badge)
+        root.addLayout(progress_row)
         self.status = QLabel("No internet or cloud service is used.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -219,26 +329,64 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.bridge.status_changed.connect(self.status.setText)
-        self.bridge.progress_changed.connect(lambda _transfer, value: self.progress.setValue(value))
-        self.bridge.discovery_changed.connect(self.update_lan_peers)
-        self.bridge.pairing_display.connect(self.show_pair_code)
-        self.bridge.pairing_input.connect(self.enter_pair_code)
+        self.bridge.progress_changed.connect(self.update_progress)
         self.bridge.transfer_offer.connect(self.confirm_transfer)
-        self.bridge.paired_changed.connect(self.refresh_nearby_devices)
-        self.bridge.pairing_finished.connect(self.finish_pairing_attempt)
         self.bridge.transfer_finished.connect(self.finish_transfer)
+        self.bridge.transfer_result.connect(self.finish_transfer_result)
+        self.bridge.receive_finished.connect(self.finish_receive)
         self.bridge.radio_event.connect(self.handle_radio_event)
+        self.bridge.discovery_changed.connect(self.handle_discovery)
+        self.bridge.transport_changed.connect(self.set_transfer_transport)
+        self.bridge.trust_changed.connect(self.refresh_nearby_devices)
+        self.bridge.radio_loaded.connect(self._finish_radio_load)
         self.file_list.files_dropped.connect(self.add_paths)
         self.add_button.clicked.connect(self.pick_files)
         self.remove_button.clicked.connect(self.remove_files)
+        self.refresh_button.clicked.connect(self.refresh_devices)
+        self.devices.customContextMenuRequested.connect(self.show_device_menu)
         self.devices.itemClicked.connect(self.device_clicked)
 
+    def _apply_device_list_theme(self) -> None:
+        palette = self.palette()
+        border = palette.color(QPalette.Mid).name()
+        hover = palette.color(QPalette.AlternateBase).name()
+        selected = palette.color(QPalette.Highlight).name()
+        selected_text = palette.color(QPalette.HighlightedText).name()
+        self.devices.setStyleSheet(
+            f"QListWidget {{ border: 1px solid {border}; border-radius: 9px; padding: 5px; }}"
+            "QListWidget::item { border-radius: 7px; margin: 2px; }"
+            f"QListWidget::item:hover {{ background: {hover}; }}"
+            f"QListWidget::item:selected {{ background: {selected}; color: {selected_text}; }}"
+            f"QListWidget::item:selected:!active {{ background: {selected}; color: {selected_text}; }}"
+        )
+
     @Slot(object)
-    def update_lan_peers(self, peers: list[DiscoveredPeer]) -> None:
-        self.lan_peers = {peer.device_id: peer for peer in peers}
+    def set_transfer_transport(self, transport) -> None:
+        if transport is None:
+            self.transport_badge.clear()
+            self.transport_badge.hide()
+            return
+        value = getattr(transport, "value", str(transport))
+        wifi_direct = value == Transport.WIFI_DIRECT.value
+        label = "Wi-Fi Direct" if wifi_direct else "LAN"
+        dark_theme = self.palette().color(QPalette.Base).lightness() < 128
+        if wifi_direct:
+            foreground, background = (("#e9d5ff", "#581c87") if dark_theme
+                                      else ("#6b21a8", "#f3e8ff"))
+        else:
+            foreground, background = (("#bfdbfe", "#1e3a8a") if dark_theme
+                                      else ("#1e40af", "#dbeafe"))
+        self.transport_badge.setText(label)
+        self.transport_badge.setStyleSheet(
+            f"color: {foreground}; background: {background}; border-radius: 9px; "
+            "padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        )
+        self.transport_badge.show()
 
     @Slot(object)
     def add_paths(self, paths: list[Path]) -> None:
+        if self.workflow_active or self.receiving:
+            return
         existing = {str(path.resolve()) for path in self.paths}
         for path in paths:
             if path.is_file() and str(path.resolve()) not in existing:
@@ -246,384 +394,367 @@ class MainWindow(QMainWindow):
                 self.file_list.addItem(f"{path.name}  ({path.stat().st_size:,} bytes)")
                 existing.add(str(path.resolve()))
         if self.paths:
-            self.status.setText("Files ready. Click a nearby Bluetooth device to send.")
+            self.status.setText("Files ready. Click a nearby device to send.")
+        self.refresh_nearby_devices()
 
     def pick_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, "Choose files")
         self.add_paths([Path(value) for value in files])
 
     def remove_files(self) -> None:
+        if self.workflow_active or self.receiving:
+            return
         rows = sorted((self.file_list.row(item) for item in self.file_list.selectedItems()), reverse=True)
         for row in rows:
             self.file_list.takeItem(row)
             self.paths.pop(row)
+        self.refresh_nearby_devices()
+
+    def show_device_menu(self, position) -> None:
+        item = self.devices.itemAt(position)
+        if not item or not item.data(DEVICE_TRUSTED_ROLE):
+            return
+        menu = QMenu(self)
+        revoke = menu.addAction("Revoke trust")
+        if menu.exec(self.devices.mapToGlobal(position)) is not revoke:
+            return
+        device_id = item.data(DEVICE_ID_ROLE)
+        if not device_id:
+            return
+        answer = QMessageBox.question(
+            self, "Revoke trust",
+            "Revoke trust for this device? Future transfers will require approval and establish trust again.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.store.revoke_trust(str(device_id))
+        self.status.setText("Device trust revoked. Transfer history was kept.")
+        self.refresh_nearby_devices()
+
+    def refresh_devices(self) -> None:
+        if self.workflow_active or self.receiving:
+            return
+        self.status.setText("Refreshing nearby devices...")
+        if self.discovery:
+            self.discovery.refresh()
+        self.refresh_nearby_devices()
+        if self.radio and self.radio_ready and not self.scan_pending:
+            self.scan_radios()
+        else:
+            self.status.setText("Nearby device list refreshed.")
+
+    def set_busy(self, busy: bool) -> None:
+        self.devices.setEnabled(not busy)
+        self.add_button.setEnabled(not busy)
+        self.remove_button.setEnabled(not busy)
+        self.file_list.setEnabled(not busy)
+        self.refresh_button.setEnabled(not busy)
 
     @Slot(QListWidgetItem)
     def device_clicked(self, item: QListWidgetItem) -> None:
-        ble_token = item.data(Qt.UserRole)
-        if not ble_token:
-            return
-        if self.workflow_active:
-            self.status.setText("A send request is already in progress.")
+        radio_id = item.data(Qt.UserRole)
+        if not radio_id or self.workflow_active or self.receiving:
             return
         if not self.paths:
-            QMessageBox.information(self, "Drop a file first", "Add or drop at least one file before selecting a device.")
+            self.status.setText("Drop or add files before selecting a device.")
             return
-        if ble_token not in self.ble_tokens:
-            self.status.setText("That Bluetooth device is no longer nearby.")
-            self.refresh_nearby_devices()
+        if str(radio_id).startswith("lan:"):
+            peer = getattr(self, "lan_peers", {}).get(str(radio_id)[4:])
+            if not peer:
+                self.status.setText("Device no longer available. Waiting for a fresh LAN announcement.")
+                return
+            self.workflow_active, self.send_started = True, True
+            self.set_transfer_transport(Transport.LAN)
+            self.attempt_id = uuid.uuid4().hex
+            observed = self.discovery.routes_for(peer.device_id) if self.discovery else [peer]
+            by_endpoint = {f"{route.host}:{route.port}": route
+                           for route in [peer, *(item for item in observed if item.host != peer.host)]}
+            ranked = self.store.rank_endpoints(peer.device_id, list(by_endpoint))
+            routes = [by_endpoint[endpoint] for endpoint in ranked]
+            self.selected_endpoint = {"device_id": peer.device_id, "name": peer.display_name,
+                                      "public_key": peer.public_key, "route": "lan",
+                                      "supports_wifi_direct": peer.supports_wifi_direct,
+                                      "lan_routes": routes, "lan_route_index": 0}
+            self.set_busy(True)
+            self.progress.setRange(0, 0)
+            self.status.setText(f"Same network: connecting to {peer.display_name}...")
+            self._send_lan_route(peer)
             return
-
-        self.workflow_active = True
-        self.pending_ble_token = ble_token
-        self.pending_radio_id = None
-        self.pending_peer = None
-        self.devices.setEnabled(False)
-        self.progress.setValue(0)
-        self.status.setText("Connecting to the nearby device...")
-
-        # Connect immediately if a matching Wi-Fi Direct peer was already discovered
-        for radio_id, radio_peer in list(self.radio_peers.items()):
-            self._connect_matching_wifi_peer(radio_id, radio_peer)
-            if self.pending_radio_id:
-                break
-
-        if not self.pending_radio_id:
-            # Start Wi-Fi Direct scanning to discover the endpoint without Bluetooth GATT pairing
-            self.scan_timer.start()
-            self.scan_radios()
-            self.status.setText("Searching for direct Wi-Fi endpoint…")
-            QTimer.singleShot(25000, lambda token=ble_token: self._wifi_lookup_timed_out(token))
-
-    def _bluetooth_metadata_timed_out(self, token: str) -> None:
-        if self.workflow_active and not self.pending_radio_id:
-            self.status.setText("Searching for direct Wi-Fi endpoint…")
-            QTimer.singleShot(15000, lambda t=token: self._wifi_lookup_timed_out(t))
-
-    def _wifi_lookup_timed_out(self, token: str) -> None:
-        if self.workflow_active and not self.pending_radio_id:
-            self.status.setText(
-                "Could not contact that device over Wi-Fi Direct. Keep both apps open and check that Wi-Fi is enabled."
-            )
-            self.reset_workflow()
-
-    def _connect_matching_wifi_peer(self, radio_id: str, peer: dict) -> None:
-        if not self.workflow_active:
+        peer = self.radio_peers.get(radio_id)
+        if not peer:
+            self.status.setText("Device no longer available. Waiting for a fresh scan.")
             return
-        if self.pending_radio_id:
-            return
-
-        target_token = self.pending_ble_token
-        target_peer = self.ble_peers.get(target_token or "", {})
-        target_name = str(target_peer.get("name") or "").strip().casefold()
-        peer_name = str(peer.get("name") or "").strip().casefold()
-
-        token_match = bool(target_token and peer.get("token") == target_token)
-        name_match = bool(target_name and peer_name and target_name == peer_name)
-        id_match = bool(target_peer.get("device_id") and target_peer.get("device_id") == peer.get("device_id"))
-
-        if not (token_match or name_match or id_match):
-            return
-
-        public_key = peer.get("public_key") or target_peer.get("public_key") or ""
-        peer = {
-            **peer,
-            "name": peer.get("name") or target_peer.get("name") or "Nearby device",
-            "port": peer.get("port") or target_peer.get("port"),
-            "public_key": public_key,
-        }
-        self.radio_peers[radio_id] = peer
+        self.attempt_id = uuid.uuid4().hex
+        self.set_transfer_transport(Transport.WIFI_DIRECT)
+        self.selected_endpoint = dict(peer)
         self.pending_radio_id = radio_id
-        self.scan_timer.stop()
-        self.status.setText(f"Creating a direct connection to {peer.get('name')}…")
+        self.pending_peer = None
+        self.send_started = False
+        self.workflow_active = True
+        self.set_busy(True)
+        self.progress.setRange(0, 0)
+        if self.scan_timer:
+            self.scan_timer.stop()
+        self.status.setText(f"Connecting to {peer['name']} over Wi-Fi Direct...")
         try:
-            self.radio.connect_wifi_direct(radio_id)
-            QTimer.singleShot(45000, lambda target=radio_id: self._wifi_connection_timed_out(target))
+            self.radio.connect_wifi_direct(radio_id, self.attempt_id)
         except RuntimeError as exc:
-            self.status.setText(str(exc))
+            self.status.setText(f"Connection failed: {exc}")
             self.reset_workflow()
 
-    def _wifi_connection_timed_out(self, radio_id: str) -> None:
-        if self.workflow_active and self.pending_radio_id == radio_id and self.pending_peer is None:
-            self.status.setText("The receiving device did not complete the Wi-Fi Direct connection.")
-            self.reset_workflow()
+    def _send_lan_route(self, peer: DiscoveredPeer) -> None:
+        self.network.send_files(peer, list(self.paths), expected_public_key=peer.public_key,
+                                local_address=peer.local_interface)
 
     def scan_radios(self) -> None:
-        if self.scan_pending or not self.radio.supported:
-            return
-        if self.workflow_active:
+        if not self.radio or not self.radio_ready or self.scan_pending or self.workflow_active or self.receiving:
             return
         self.scan_pending = True
+        self.radio_status.setText("Scanning Wi-Fi Direct...")
         try:
             self.radio.scan_wifi_direct()
         except RuntimeError as exc:
             self.scan_pending = False
-            self.status.setText(str(exc))
+            self.radio_status.setText(f"Scan unavailable: {exc}")
 
     @Slot(object)
     def handle_radio_event(self, event: dict) -> None:
-        kind = event.get("event")
-        error_events = {
-            "error", "fatal", "wifi_direct_error", "bluetooth_metadata_error",
-            "bluetooth_discovery_error", "bluetooth_stopped",
-        }
-        if kind in error_events:
-            logger.error("Radio event: %s", {key: value for key, value in event.items() if key != "traceback"})
-            if event.get("traceback"):
-                logger.error("Full radio traceback:\n%s", event["traceback"])
-        elif kind == "ble_peer":
-            logger.debug("Radio event: %s", event)
+        kind = event.get("event", "")
+        if "error" in kind or kind == "fatal":
+            logger.error("Radio event: %s", event)
         else:
             logger.info("Radio event: %s", event)
-
         if kind == "ready":
-            implementation = event.get("implementation", "native")
-            self.ble_status.setText(f"Scanning · {implementation}")
-        elif kind == "ble_peer":
-            token = event["token"]
-            name_key = str(event.get("name") or "").strip().casefold()
-            existing_token = self.ble_name_index.get(name_key) if name_key else None
-            if existing_token and existing_token != token:
-                existing = self.ble_peers.get(existing_token, {})
-                existing_score = (
-                    bool(existing.get("is_paired")),
-                    bool(existing.get("connectable", True)),
-                    int(existing.get("rssi", -999)),
-                )
-                incoming_score = (
-                    bool(event.get("is_paired")),
-                    bool(event.get("connectable", True)),
-                    int(event.get("rssi", -999)),
-                )
-                if (
-                    existing_token == self.pending_ble_token
-                    or existing_score >= incoming_score
-                ):
-                    return
-                self.ble_tokens.discard(existing_token)
-                self.ble_peers.pop(existing_token, None)
-            if name_key:
-                self.ble_name_index[name_key] = token
-            self.ble_tokens.add(token)
-            self.ble_peers[token] = event
-            self.ble_status.setText(f"{len(self.ble_tokens)} nearby")
-            self.refresh_nearby_devices()
-        elif kind == "bluetooth_metadata_started":
-            self.status.setText("Reading Wi-Fi connection details over Bluetooth...")
-        elif kind == "wifi_direct_starting":
-            self.status.setText("Bluetooth metadata received. Starting Wi-Fi Direct...")
-        elif kind == "bluetooth_ready":
-            if not self.workflow_active or not self.pending_ble_token:
-                return
-            discovered = self.ble_peers.get(self.pending_ble_token, {})
-            if event.get("address") != discovered.get("address"):
-                return
-            discovery_token = self.pending_ble_token
-            wifi_token = event["token"]
-            discovered.update(event)
-            self.ble_peers.pop(discovery_token, None)
-            self.ble_tokens.discard(discovery_token)
-            self.ble_peers[wifi_token] = discovered
-            self.ble_tokens.add(wifi_token)
-            self.pending_ble_token = wifi_token
-            name_key = str(event.get("name") or "").strip().casefold()
-            if name_key:
-                self.ble_name_index[name_key] = wifi_token
-            self.status.setText(f"Found {event['name']} over Bluetooth. Finding its Wi-Fi Direct endpoint...")
-            cached = next(
-                ((radio_id, peer) for radio_id, peer in self.radio_peers.items()
-                 if peer.get("token") == self.pending_ble_token),
-                None,
-            )
-            if cached:
-                self._connect_matching_wifi_peer(*cached)
-            else:
-                self.scan_timer.start()
-                self.scan_radios()
-            QTimer.singleShot(30000, lambda token=wifi_token: self._wifi_lookup_timed_out(token))
-            self.refresh_nearby_devices()
+            self.radio_ready = True
+            self.radio_status.setText("Wi-Fi Direct ready")
+            self.status.setText("Searching for nearby computers. Keep the app open on both devices.")
+            self.scan_timer.start()
+            self.scan_radios()
         elif kind == "wifi_direct_peer":
-            self.radio_peers[event["id"]] = event
-            self._connect_matching_wifi_peer(event["id"], event)
+            try:
+                if not event.get("device_id") or not 0 < int(event["port"]) < 65536 or len(unb64(event["public_key"])) != 32:
+                    raise ValueError("Incomplete discovery metadata")
+            except (KeyError, ValueError, TypeError):
+                logger.warning("Ignoring incomplete Wi-Fi Direct endpoint %s", event.get("id"))
+                return
+            if event["device_id"] == self.identity.device_id:
+                return
+            # Deduplicate by app identity, never by hostname.
+            for key, existing in list(self.radio_peers.items()):
+                if existing["device_id"] == event["device_id"] and key != event["id"]:
+                    del self.radio_peers[key]
+            self.radio_peers[event["id"]] = {**event, "seen_at": time.monotonic()}
             self.refresh_nearby_devices()
         elif kind == "wifi_direct_scan_complete":
             self.scan_pending = False
-            if self.workflow_active and not self.pending_radio_id and not event.get("count"):
-                self.status.setText("Bluetooth found. Waiting for its Wi-Fi Direct endpoint…")
+            self.radio_status.setText(f"{len(self.radio_peers)} nearby")
             self.refresh_nearby_devices()
-        elif kind == "wifi_direct_connection_request":
-            # Establish the transport silently. The signed file offer below is
-            # the receiver's single user-facing Accept/Decline decision.
-            self.scan_timer.stop()
+        elif kind == "wifi_direct_scan_error":
             self.scan_pending = False
-            self.workflow_active = True
-            event["accepted"] = True
+            self.radio_status.setText("Scan failed; retrying")
+            if not self.workflow_active and not self.receiving:
+                self.status.setText(f"Discovery failed: {event.get('message')}. Retrying automatically.")
+        elif kind == "wifi_direct_connection_request":
+            event["accepted"] = not self.workflow_active and not self.receiving
+            if event["accepted"]:
+                self.receiving = True
+                self.incoming_radio_id = event.get("id")
+                if self.scan_timer:
+                    self.scan_timer.stop()
+                self.set_busy(True)
+                self.progress.setRange(0, 0)
+                self.status.setText(f"Connecting incoming sender {event.get('name')}...")
+                logger.info("Accepted incoming Wi-Fi Direct request from %s; waiting for Windows endpoint", event.get("name"))
             event["_decision"].set()
-            self.status.setText("Nearby sender found. Preparing the secure file offer…")
         elif kind == "wifi_direct_connected":
             self.handle_wifi_connected(event)
-        elif kind in error_events:
-            self.scan_pending = False
-            phase = event.get("phase")
-            prefix = f"{phase}: " if phase and phase != "unknown" else ""
-            self.status.setText(f"Radio error: {prefix}{event.get('message') or event.get('error') or kind}")
-            if self.workflow_active and kind not in ("bluetooth_discovery_error", "bluetooth_metadata_error"):
+        elif kind == "wifi_direct_pairing_ceremony":
+            if self.workflow_active or self.receiving:
+                self.status.setText("Negotiating the Wi-Fi Direct connection with Windows...")
+        elif kind == "wifi_direct_status":
+            state = str(event.get("status", ""))
+            if state == "ABORTED":
+                self.radio_ready = False
+                self.radio_status.setText("Wi-Fi Direct unavailable")
+                self.status.setText(f"Windows stopped Wi-Fi Direct: {event.get('error')}. Check Wi-Fi and adapter drivers.")
+            elif state == "STARTED":
+                self.radio_ready = True
+                self.radio_status.setText("Wi-Fi Direct ready")
+            elif not self.workflow_active and not self.receiving:
+                self.radio_status.setText(f"Wi-Fi Direct: {state.lower()}")
+        elif kind in ("wifi_direct_error", "error", "fatal"):
+            if event.get("attempt_id") and event["attempt_id"] != self.attempt_id:
+                return
+            self.status.setText(f"{event.get('phase', 'Radio')}: {event.get('message', 'Connection failed')}")
+            if kind == "fatal":
+                self.radio_ready = False
+                self.radio_status.setText("Wi-Fi Direct unavailable")
+            self.reset_workflow()
+        elif kind == "wifi_direct_connection_status" and event.get("status") == "DISCONNECTED":
+            self.network.clear_links()
+            # Active socket operations report their own error with the transfer phase.
+            if self.receiving and not self.receive_offer_active and event.get("id") == self.incoming_radio_id:
+                self.status.setText("Sender disconnected. Waiting for another connection.")
                 self.reset_workflow()
-            elif kind == "bluetooth_metadata_error" and self.workflow_active and not self.pending_radio_id:
-                logger.warning("Bluetooth metadata error: %s; continuing Wi-Fi Direct search", event.get("message"))
-                self.status.setText("Searching for direct Wi-Fi endpoint…")
 
     def refresh_nearby_devices(self) -> None:
-        selected = self.pending_ble_token
         self.devices.clear()
-        wifi_by_token = {peer.get("token"): peer for peer in self.radio_peers.values()}
-        for token in sorted(self.ble_tokens):
-            peer = wifi_by_token.get(token, {})
-            ble_peer = self.ble_peers.get(token, {})
-            trusted = self.store.peer(peer.get("device_id", "")) if peer else None
-            trust = " · trusted" if trusted else " · new device"
-            name = peer.get("name") or ble_peer.get("name") or f"Nearby device {token[-4:]}"
-            item = QListWidgetItem(f"{name}\nBluetooth nearby{trust}")
-            item.setData(Qt.UserRole, token)
-            self.devices.addItem(item)
-            if token == selected:
-                self.devices.setCurrentItem(item)
-        if not self.ble_tokens:
-            item = QListWidgetItem("Searching for nearby devices over Bluetooth…")
+        files_ready = bool(self.paths)
+        self.device_instruction.setText(
+            "2. Select a device to send" if files_ready
+            else "2. Add files first, then select a device"
+        )
+        self.device_instruction.setStyleSheet(
+            "font-weight: 650; color: #2563eb" if files_ready else "color: #666"
+        )
+        trusted_by_id = {peer["device_id"]: peer for peer in self.store.peers()}
+        online: dict[str, dict] = {}
+        lan_ids = set()
+        for device_id, peer in getattr(self, "lan_peers", {}).items():
+            online[device_id] = {
+                "device_id": device_id, "name": peer.display_name,
+                "detail": "Same network (LAN)", "target": f"lan:{device_id}",
+            }
+            lan_ids.add(device_id)
+        for radio_id, peer in sorted(self.radio_peers.items(), key=lambda entry: entry[1].get("name", "")):
+            if peer.get("device_id") in lan_ids:
+                continue
+            device_id = peer.get("device_id")
+            if device_id:
+                online[device_id] = {
+                    "device_id": device_id, "name": peer.get("name") or "Nearby computer",
+                    "detail": "Nearby connection (Wi-Fi Direct)", "target": radio_id,
+                }
+
+        trusted_rows = []
+        new_rows = []
+        for device_id, peer in online.items():
+            row = {**peer, "online": True, "trusted": device_id in trusted_by_id}
+            (trusted_rows if row["trusted"] else new_rows).append(row)
+        for device_id, peer in trusted_by_id.items():
+            if device_id not in online:
+                trusted_rows.append({
+                    "device_id": device_id, "name": peer["name"], "detail": "Last seen previously",
+                    "target": None, "online": False, "trusted": True,
+                })
+
+        self._add_device_section("Trusted Devices")
+        if trusted_rows:
+            for row in sorted(trusted_rows, key=lambda value: (not value["online"], value["name"].casefold())):
+                self._add_device_row(row, files_ready)
+        else:
+            self._add_empty_device_row("No trusted devices yet")
+
+        self._add_device_section("New Devices")
+        if new_rows:
+            for row in sorted(new_rows, key=lambda value: value["name"].casefold()):
+                self._add_device_row(row, files_ready)
+        else:
+            self._add_empty_device_row("No new devices online")
+
+    def _add_device_section(self, title: str) -> None:
+        item = QListWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+        widget = DeviceSectionHeader(title)
+        item.setSizeHint(widget.sizeHint())
+        self.devices.addItem(item)
+        self.devices.setItemWidget(item, widget)
+
+    def _add_empty_device_row(self, message: str) -> None:
+        item = QListWidgetItem(message)
+        item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+        item.setForeground(QColor("#9ca3af"))
+        self.devices.addItem(item)
+
+    def _add_device_row(self, row: dict, files_ready: bool) -> None:
+        online = bool(row["online"])
+        item = QListWidgetItem()
+        item.setData(DEVICE_DATA_ROLE, row["target"])
+        item.setData(DEVICE_TRUSTED_ROLE, row["trusted"])
+        item.setData(DEVICE_ONLINE_ROLE, online)
+        item.setData(DEVICE_ID_ROLE, row["device_id"])
+        if not online:
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            self.devices.addItem(item)
+            item.setToolTip("This trusted device is currently offline")
+        elif not files_ready:
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            item.setToolTip("Add one or more files before selecting a device")
+        widget = DeviceRow(row["name"], row["detail"], "Online" if online else "Offline",
+                           muted=not online or not files_ready)
+        item.setSizeHint(widget.sizeHint())
+        self.devices.addItem(item)
+        self.devices.setItemWidget(item, widget)
 
     def prune_nearby_devices(self) -> None:
-        cutoff = time.monotonic() - 20.0
-        removed = False
-        for token, peer in list(self.ble_peers.items()):
-            if token == self.pending_ble_token or float(peer.get("seen_at", 0.0)) >= cutoff:
-                continue
-            self.ble_peers.pop(token, None)
-            self.ble_tokens.discard(token)
-            name_key = str(peer.get("name") or "").strip().casefold()
-            if name_key and self.ble_name_index.get(name_key) == token:
-                self.ble_name_index.pop(name_key, None)
-            removed = True
-        if removed:
-            self.ble_status.setText(f"{len(self.ble_tokens)} nearby")
-            self.refresh_nearby_devices()
+        if self.workflow_active or self.receiving:
+            return
+        cutoff = time.monotonic() - 60
+        self.radio_peers = {key: peer for key, peer in self.radio_peers.items() if peer["seen_at"] >= cutoff}
+        if self.discovery:
+            self.discovery.refresh_registration()
+            self.discovery.prune()
+        self.refresh_nearby_devices()
+
+    @Slot(object)
+    def handle_discovery(self, peers: list[DiscoveredPeer]) -> None:
+        self.lan_peers = {peer.device_id: peer for peer in peers}
+        for peer in peers:
+            self.store.observe_peer(peer.device_id, ",".join(sorted(peer.capabilities)))
+            # Discovery metadata is necessary but transfer authentication still
+            # occurs through signed offers and pinned TLS.
+            routes = self.discovery.routes_for(peer.device_id) if self.discovery else [peer]
+            for route in routes:
+                self.network.authorize_route(route.host, Transport.LAN,
+                                             f"mdns:{peer.device_id}:{route.host}", ttl=240)
+        self.refresh_nearby_devices()
 
     def handle_wifi_connected(self, event: dict) -> None:
-        logger.info(
-            "handle_wifi_connected: workflow_active=%s pending_radio_id=%r event_id=%r local=%s remote=%s",
-            self.workflow_active, self.pending_radio_id, event.get("id"),
-            event.get("local_address"), event.get("remote_address"),
-        )
-        address = event.get("remote_address", "")
-        if ":" in address:
-            logger.info("Skipping IPv6 endpoint %s; waiting for IPv4", address)
-            return  # The file listener is IPv4; wait for the IPv4 endpoint event.
-
-        raw_event_id = str(event.get("id") or "").strip()
-        event_id = raw_event_id.replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
-        pending_id = str(self.pending_radio_id or "").strip().replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
-
-        matching_peer_id = None
-        for r_id in self.radio_peers:
-            clean_r_id = r_id.replace("_PendingRequest", "").replace("_pendingrequest", "").casefold()
-            if clean_r_id == event_id:
-                matching_peer_id = r_id
-                break
-
-        if not self.workflow_active or (pending_id and event_id != pending_id):
-            if self.paths and (matching_peer_id or self.radio_peers):
-                target_radio_id = matching_peer_id or (list(self.radio_peers.keys())[0] if len(self.radio_peers) == 1 else None)
-                if target_radio_id:
-                    logger.info(
-                        "Re-activating workflow for Wi-Fi Direct connection to %s (has pending files)",
-                        event.get("name") or target_radio_id,
-                    )
-                    self.workflow_active = True
-                    self.pending_radio_id = target_radio_id
-                else:
-                    logger.warning("Wi-Fi Direct connected with pending files but multiple ambiguous peers: %s", list(self.radio_peers.keys()))
-                    return
-            else:
-                if not self.paths:
-                    logger.info(
-                        "Wi-Fi Direct connected to %s as receiver; waiting for sender file offer",
-                        event.get("name") or event.get("id"),
-                    )
-                else:
-                    logger.warning(
-                        "Ignoring wifi_direct_connected: workflow_active=%s id_match=%s (pending=%r event=%r paths=%d)",
-                        self.workflow_active, event_id == pending_id, self.pending_radio_id, event.get("id"), len(self.paths),
-                    )
-                return
-
-        radio_peer = self.radio_peers.get(self.pending_radio_id or matching_peer_id or "", {})
-        port = int(radio_peer.get("port") or 0)
-        device_id = str(radio_peer.get("device_id") or radio_peer.get("name") or "nearby-device")
-        public_key = str(radio_peer.get("public_key") or "")
-        display_name = str(radio_peer.get("name") or "Nearby device")
-
-        if not port or not public_key:
-            target_name = str(event.get("name") or "").strip().casefold()
-            for p in self.radio_peers.values():
-                if str(p.get("name") or "").strip().casefold() == target_name:
-                    port = int(p.get("port") or port)
-                    device_id = str(p.get("device_id") or device_id)
-                    public_key = str(p.get("public_key") or public_key)
-                    display_name = str(p.get("name") or display_name)
-                    if port and public_key:
-                        break
-
-        if not port:
-            port = 22602
-
-        self.pending_peer = DiscoveredPeer(
-            f"radio:{self.pending_radio_id}", address, port, device_id, display_name
-        )
-        trusted = self.store.peer(device_id) if device_id else None
-        if trusted and public_key and (trusted["blocked"] or trusted["public_key"] != public_key):
-            self.status.setText("The nearby device identity changed. Forget it before connecting again.")
+        if ":" in event.get("remote_address", ""):
+            return
+        if not event.get("attempt_id"):
+            if self.receiving:
+                self.network.register_link(event["local_address"], event["remote_address"])
+                self.status.setText("Wi-Fi Direct connected. Waiting for the sender's file offer...")
+                QTimer.singleShot(330000, lambda endpoint=self.incoming_radio_id: self.incoming_offer_timeout(endpoint))
+            return
+        if (not self.workflow_active or event.get("attempt_id") != self.attempt_id
+                or self.send_started or event.get("id", "").casefold() != self.pending_radio_id.casefold()):
+            logger.info("Ignoring duplicate or expired connection event: %s", event)
+            return
+        self.network.register_link(event["local_address"], event["remote_address"])
+        peer = self.selected_endpoint
+        trusted = self.store.peer(peer["device_id"])
+        if trusted and (trusted["blocked"] or trusted["public_key"] != peer["public_key"]):
+            self.status.setText("Device blocked or its identity changed. Transfer stopped.")
             self.reset_workflow()
             return
-        if not trusted and public_key:
-            try:
-                if len(unb64(public_key)) == 32:
-                    self.store.trust_peer(device_id, self.pending_peer.display_name, public_key)
-            except Exception:
-                pass
-        self.status.setText("Sending the file offer; waiting for the receiver to accept…")
-        logger.info("Initiating network file send to %s:%d (peer: %s)", address, port, device_id)
-        self.network.send_files(self.pending_peer, list(self.paths))
-
-    @Slot(object)
-    def show_pair_code(self, request: Request) -> None:
-        address, code = request.payload
-        answer = QMessageBox.question(
-            self,
-            "Verify this device?",
-            f"A nearby device at {address} wants to establish app trust.\n\n"
-            f"Enter this one-time code on the sending device:\n\n{code}\n\n"
-            "Allow this verification?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+        self.pending_peer = DiscoveredPeer(
+            f"radio:{self.pending_radio_id}", event["remote_address"], int(peer["port"]),
+            peer["device_id"], peer.get("name") or "Nearby computer", peer["public_key"],
+            transport=Transport.WIFI_DIRECT, capabilities=frozenset({"lan", "wifi_direct"}),
         )
-        request.result = answer == QMessageBox.Yes
-        request.event.set()
+        self.send_started = True
+        self.network.send_files(self.pending_peer, list(self.paths),
+                                expected_public_key=peer["public_key"], local_address=event["local_address"])
 
-    @Slot(object)
-    def enter_pair_code(self, request: Request) -> None:
-        name = request.payload
-        value, ok = QInputDialog.getText(self, "Verify nearby device", f"Enter the code shown on {name}:")
-        normalized = value.upper().replace("-", "").replace(" ", "")
-        if ok and len(normalized) == 8 and all(char in CODE_ALPHABET for char in normalized):
-            request.result = normalized
-        elif ok:
-            QMessageBox.warning(self, "Invalid code", "Enter the eight displayed letters or digits.")
-        request.event.set()
+
+
+    def incoming_offer_timeout(self, endpoint: str) -> None:
+        if self.receiving and not self.receive_offer_active and self.incoming_radio_id == endpoint:
+            self.status.setText("No file offer arrived within 5 minutes. Ask the sender to retry.")
+            self.reset_workflow()
 
     @Slot(object)
     def confirm_transfer(self, request: Request) -> None:
+        if self.workflow_active or request.event.is_set():
+            request.event.set()
+            return
         peer, files = request.payload
+        self.receiving = True
+        self.receive_offer_active = True
+        self.set_busy(True)
+        self.status.setText(f"Awaiting your approval for files from {peer['name']}.")
         def readable_size(size: int) -> str:
             value = float(size)
             for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -645,24 +776,30 @@ class MainWindow(QMainWindow):
         )
         accept_button = dialog.addButton("Accept", QMessageBox.AcceptRole)
         dialog.addButton("Deny", QMessageBox.RejectRole)
+        always_accept = QCheckBox("Always accept files from this device")
+        always_accept.setChecked(False)
+        dialog.setCheckBox(always_accept)
+        QTimer.singleShot(300000, dialog.reject)
         dialog.exec()
-        if dialog.clickedButton() is accept_button:
+        if dialog.clickedButton() is accept_button and not request.event.is_set():
             downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
             destination = Path(downloads) if downloads else Path.home() / "Downloads"
             destination.mkdir(parents=True, exist_ok=True)
-            request.result = str(destination)
+            request.result = TransferApproval(str(destination), always_accept.isChecked())
+            self.status.setText("Accepted. Receiving files into Downloads...")
+        else:
+            self.status.setText("Transfer declined.")
         request.event.set()
 
+    @Slot(str, int)
+    def update_progress(self, _transfer: str, value: int) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(value)
+
     @Slot()
-    def finish_pairing_attempt(self) -> None:
-        if not self.workflow_active or not self.pending_peer:
-            return
-        if self.store.peer(self.pending_peer.device_id):
-            self.status.setText("Device verified. Sending the file offer; waiting for acceptance…")
-            self.network.send_files(self.pending_peer, list(self.paths))
-        else:
-            self.status.setText("Device verification was not completed.")
-            self.reset_workflow()
+    def finish_receive(self) -> None:
+        if self.receiving:
+            self.reset_workflow(reset_link=False)
 
     @Slot(bool)
     def finish_transfer(self, succeeded: bool) -> None:
@@ -671,27 +808,78 @@ class MainWindow(QMainWindow):
             self.file_list.clear()
         self.reset_workflow()
 
-    def reset_workflow(self) -> None:
-        self.scan_timer.stop()
+    @Slot(object)
+    def finish_transfer_result(self, result) -> None:
+        if result.succeeded:
+            self.finish_transfer(True)
+            return
+        if (getattr(result, "may_fallback", False) and self.selected_endpoint
+                and self.selected_endpoint.get("route") == "lan"):
+            routes = self.selected_endpoint.get("lan_routes", [])
+            next_index = int(self.selected_endpoint.get("lan_route_index", 0)) + 1
+            if next_index < len(routes):
+                self.selected_endpoint["lan_route_index"] = next_index
+                self.status.setText("LAN endpoint unavailable; trying another address...")
+                self._send_lan_route(routes[next_index])
+                return
+        if (getattr(result, "may_fallback", False) and self.selected_endpoint
+                and self.selected_endpoint.get("route") == "lan" and self.radio):
+            match = next(((radio_id, peer) for radio_id, peer in self.radio_peers.items()
+                          if peer.get("device_id") == self.selected_endpoint["device_id"]), None)
+            if match and self.selected_endpoint.get("supports_wifi_direct", False):
+                radio_id, peer = match
+                self.pending_radio_id = radio_id
+                self.selected_endpoint = dict(peer)
+                self.send_started = False
+                self.set_transfer_transport(Transport.WIFI_DIRECT)
+                self.status.setText("LAN unavailable; trying Wi-Fi Direct...")
+                try:
+                    self.radio.connect_wifi_direct(radio_id, self.attempt_id)
+                    return
+                except RuntimeError as exc:
+                    self.status.setText(f"Wi-Fi Direct fallback failed: {exc}")
+        if self.selected_endpoint and self.selected_endpoint.get("route") == "lan":
+            self.status.setText("Could not reach this device on the LAN. Check that both devices are on the same subnet and allow the app through the firewall.")
+        self.finish_transfer(False)
+
+    def reset_workflow(self, reset_link: bool = True) -> None:
+        if self.scan_timer:
+            self.scan_timer.stop()
         self.scan_pending = False
         self.workflow_active = False
-        self.pending_ble_token = None
         self.pending_radio_id = None
         self.pending_peer = None
-        self.devices.setEnabled(True)
-        if hasattr(self.radio, "reset_wifi_direct"):
+        self.receiving = False
+        self.incoming_radio_id = None
+        self.receive_offer_active = False
+        self.attempt_id = None
+        self.selected_endpoint = None
+        self.send_started = False
+        self.set_transfer_transport(None)
+        self.progress.setRange(0, 100)
+        self.set_busy(False)
+        if reset_link:
+            self.network.clear_links()
+        if reset_link and self.radio and hasattr(self.radio, "reset_wifi_direct"):
             try:
                 self.radio.reset_wifi_direct()
             except Exception as exc:
                 logger.warning("Error resetting Wi-Fi Direct on radio: %s", exc)
         self.refresh_nearby_devices()
-        QTimer.singleShot(2000, self.scan_timer.start)
+        if self.scan_timer:
+            QTimer.singleShot(2000, self.scan_timer.start)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.scan_timer.stop()
-        self.ble_expiry_timer.stop()
-        self.radio.close()
-        self.discovery.close()
+        self._closing = True
+        if self.scan_timer:
+            self.scan_timer.stop()
+        self.expiry_timer.stop()
+        if self.radio:
+            self.radio.close()
+        discovery, self.discovery = self.discovery, None
+        if discovery:
+            threading.Thread(target=discovery.close, daemon=True,
+                             name="lan-discovery-close").start()
         self.network.close()
         self.store.close()
         event.accept()

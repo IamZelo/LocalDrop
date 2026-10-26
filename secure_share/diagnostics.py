@@ -8,8 +8,7 @@ import sys
 from PySide6.QtCore import QCoreApplication
 from qasync import QEventLoop
 
-from .native_radio import NativeRadio
-from .winrt_radio import missing_modules
+from .discovery import _ipv4_addresses
 
 
 def main() -> int:
@@ -21,10 +20,23 @@ def main() -> int:
     print(f"Python: {sys.version}")
     print(f"Platform: {platform.platform()}")
     print(f"Executable: {sys.executable}")
+    print(f"mDNS IPv4 address count: {len(_ipv4_addresses())}")
+    if sys.platform != "win32":
+        print("Wi-Fi Direct: not applicable on this platform")
+        return 0
+
+    from .native_radio import NativeRadio
+    from .winrt_radio import missing_modules
     print(f"Missing WinRT modules: {missing_modules() or 'none'}")
     print("Radio backend policy: Python WinRT only (no helper fallback)")
 
+    startup = {"ready": False, "failed": False}
+
     def event(value: dict) -> None:
+        if value.get("event") == "ready":
+            startup["ready"] = True
+        elif value.get("event") == "fatal":
+            startup["failed"] = True
         traceback_text = value.get("traceback")
         summary = {key: item for key, item in value.items() if key != "traceback"}
         print(f"RADIO EVENT: {summary}", flush=True)
@@ -42,9 +54,17 @@ def main() -> int:
             print("RESULT: radio failed to start", file=sys.stderr)
             return 1
         try:
-            print("Radio started; observing Bluetooth advertisements for 15 seconds...")
-            print("Wi-Fi Direct and Bluetooth are active.")
-            await asyncio.sleep(15)
+            print("Waiting for Wi-Fi Direct startup, then scanning for up to 30 seconds...")
+            print("Wi-Fi Direct startup is pending; watch publisher status below.")
+            for _ in range(250):
+                if startup["ready"] or startup["failed"]:
+                    break
+                await asyncio.sleep(0.1)
+            if not startup["ready"]:
+                print("RESULT: Wi-Fi Direct startup failed", file=sys.stderr)
+                return 1
+            radio.scan_wifi_direct()
+            await asyncio.sleep(30)
             print("RESULT: radio backend remained running")
             return 0
         finally:
