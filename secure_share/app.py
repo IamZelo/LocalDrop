@@ -28,6 +28,11 @@ from PySide6.QtWidgets import (
 from qasync import QEventLoop
 
 from .discovery import DiscoveredPeer
+try:  # lightweight test boundaries may expose only the peer record
+    from .discovery import Discovery
+except ImportError:  # pragma: no cover - used by isolated UI tests
+    Discovery = None  # type: ignore[misc,assignment]
+from .connectivity import Transport
 from .identity import load_or_create_identity, unb64
 from .native_radio import NativeRadio
 from .network import InteractionCallbacks, NetworkManager
@@ -48,8 +53,10 @@ class UiBridge(QObject):
     progress_changed = Signal(str, int)
     transfer_offer = Signal(object)
     transfer_finished = Signal(bool)
+    transfer_result = Signal(object)
     receive_finished = Signal()
     radio_event = Signal(object)
+    discovery_changed = Signal(object)
 
     def _wait(self, signal: Signal, payload: object, timeout: int = 300):
         request = Request(payload)
@@ -105,11 +112,13 @@ class MainWindow(QMainWindow):
             self.bridge.accept_transfer,
             self.bridge.status_changed.emit,
             self.bridge.progress_changed.emit,
-            self.bridge.transfer_finished.emit,
+            lambda _succeeded: None,
             receive_finished=self.bridge.receive_finished.emit,
+            result_finished=self.bridge.transfer_result.emit,
         )
         self.network = NetworkManager(self.identity, self.store, callbacks)
         self.radio_peers: dict[str, dict] = {}
+        self.lan_peers: dict[str, DiscoveredPeer] = {}
         self.radio_ready = False
         self.receiving = False
         self.incoming_radio_id = None
@@ -125,6 +134,11 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._connect_signals()
+
+        # LAN discovery is independent of WinRT and starts before the radio.
+        self.discovery = Discovery(self.identity.device_id, self.identity.display_name,
+                                   self.network.port, self.identity.public_b64,
+                                   self.bridge.discovery_changed.emit)
 
         self.radio = NativeRadio(
             self.identity.device_id,
@@ -154,7 +168,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Local Secure Share")
         title.setStyleSheet("font-size: 25px; font-weight: 650")
         root.addWidget(title)
-        subtitle = QLabel(f"{self.identity.display_name} | Wi-Fi Direct | Windows")
+        subtitle = QLabel(f"{self.identity.display_name} | LAN + nearby wireless | Windows")
         subtitle.setStyleSheet("color: #666")
         root.addWidget(subtitle)
 
@@ -206,8 +220,10 @@ class MainWindow(QMainWindow):
         self.bridge.progress_changed.connect(self.update_progress)
         self.bridge.transfer_offer.connect(self.confirm_transfer)
         self.bridge.transfer_finished.connect(self.finish_transfer)
+        self.bridge.transfer_result.connect(self.finish_transfer_result)
         self.bridge.receive_finished.connect(self.finish_receive)
         self.bridge.radio_event.connect(self.handle_radio_event)
+        self.bridge.discovery_changed.connect(self.handle_discovery)
         self.file_list.files_dropped.connect(self.add_paths)
         self.add_button.clicked.connect(self.pick_files)
         self.remove_button.clicked.connect(self.remove_files)
@@ -251,6 +267,21 @@ class MainWindow(QMainWindow):
             return
         if not self.paths:
             self.status.setText("Drop or add files before selecting a device.")
+            return
+        if str(radio_id).startswith("lan:"):
+            peer = getattr(self, "lan_peers", {}).get(str(radio_id)[4:])
+            if not peer:
+                self.status.setText("Device no longer available. Waiting for a fresh LAN announcement.")
+                return
+            self.workflow_active, self.send_started = True, True
+            self.attempt_id = uuid.uuid4().hex
+            self.selected_endpoint = {"device_id": peer.device_id, "name": peer.display_name,
+                                      "public_key": peer.public_key, "route": "lan"}
+            self.set_busy(True)
+            self.progress.setRange(0, 0)
+            self.status.setText(f"Same network: connecting to {peer.display_name}...")
+            self.network.send_files(peer, list(self.paths), expected_public_key=peer.public_key,
+                                    local_address=peer.local_interface)
             return
         peer = self.radio_peers.get(radio_id)
         if not peer:
@@ -364,11 +395,19 @@ class MainWindow(QMainWindow):
 
     def refresh_nearby_devices(self) -> None:
         self.devices.clear()
+        lan_ids = set()
+        for device_id, peer in sorted(getattr(self, "lan_peers", {}).items(), key=lambda entry: entry[1].display_name):
+            item = QListWidgetItem(f"{peer.display_name}  |  Same network")
+            item.setData(Qt.UserRole, f"lan:{device_id}")
+            self.devices.addItem(item)
+            lan_ids.add(device_id)
         for radio_id, peer in sorted(self.radio_peers.items(), key=lambda entry: entry[1].get("name", "")):
+            if peer.get("device_id") in lan_ids:
+                continue
             item = QListWidgetItem(f"{peer.get('name') or 'Nearby computer'}  |  Wi-Fi Direct")
             item.setData(Qt.UserRole, radio_id)
             self.devices.addItem(item)
-        if not self.radio_peers:
+        if not self.radio_peers and not getattr(self, "lan_peers", {}):
             item = QListWidgetItem("No nearby computers yet. Keep Wi-Fi and this app on on both PCs.")
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
             self.devices.addItem(item)
@@ -378,6 +417,18 @@ class MainWindow(QMainWindow):
             return
         cutoff = time.monotonic() - 60
         self.radio_peers = {key: peer for key, peer in self.radio_peers.items() if peer["seen_at"] >= cutoff}
+        if hasattr(self, "discovery"):
+            self.discovery.refresh_registration()
+            self.discovery.prune()
+        self.refresh_nearby_devices()
+
+    @Slot(object)
+    def handle_discovery(self, peers: list[DiscoveredPeer]) -> None:
+        self.lan_peers = {peer.device_id: peer for peer in peers}
+        for peer in peers:
+            # Discovery metadata is necessary but transfer authentication still
+            # occurs through signed offers and pinned TLS.
+            self.network.authorize_route(peer.host, Transport.LAN, f"mdns:{peer.device_id}", ttl=60)
         self.refresh_nearby_devices()
 
     def handle_wifi_connected(self, event: dict) -> None:
@@ -475,6 +526,28 @@ class MainWindow(QMainWindow):
             self.file_list.clear()
         self.reset_workflow()
 
+    @Slot(object)
+    def finish_transfer_result(self, result) -> None:
+        if result.succeeded:
+            self.finish_transfer(True)
+            return
+        if (getattr(result, "may_fallback", False) and self.selected_endpoint
+                and self.selected_endpoint.get("route") == "lan"):
+            match = next(((radio_id, peer) for radio_id, peer in self.radio_peers.items()
+                          if peer.get("device_id") == self.selected_endpoint["device_id"]), None)
+            if match:
+                radio_id, peer = match
+                self.pending_radio_id = radio_id
+                self.selected_endpoint = dict(peer)
+                self.send_started = False
+                self.status.setText("Temporary hotspot unavailable; using Wi-Fi Direct fallback...")
+                try:
+                    self.radio.connect_wifi_direct(radio_id, self.attempt_id)
+                    return
+                except RuntimeError as exc:
+                    self.status.setText(f"Wi-Fi Direct fallback failed: {exc}")
+        self.finish_transfer(False)
+
     def reset_workflow(self, reset_link: bool = True) -> None:
         self.scan_timer.stop()
         self.scan_pending = False
@@ -503,6 +576,7 @@ class MainWindow(QMainWindow):
         self.scan_timer.stop()
         self.expiry_timer.stop()
         self.radio.close()
+        self.discovery.close()
         self.network.close()
         self.store.close()
         event.accept()

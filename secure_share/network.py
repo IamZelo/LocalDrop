@@ -11,12 +11,14 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Callable
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from .discovery import DiscoveredPeer
+from .connectivity import TransferPhase, TransferResult, Transport
 from .identity import Identity, export_private_key_pem, unb64, verify
 from .protocol import CHUNK_SIZE, canonical, hash_file, recv_frame, send_chunk, send_control, unique_destination, validate_manifest
 from .storage import LocalStore
@@ -31,19 +33,33 @@ STREAM_TIMEOUT = 60
 
 
 class NetworkError(Exception):
-    pass
+    def __init__(self, message: str, *, phase: str = "connect", retryable: bool = False,
+                 offer_sent: bool = False):
+        super().__init__(message)
+        self.phase, self.retryable, self.offer_sent = phase, retryable, offer_sent
+
+
+@dataclass(frozen=True)
+class RouteAuthorization:
+    remote_address: str
+    transport: Transport
+    session_id: str
+    expires_at: float
+    local_address: str | None = None
 
 
 class InteractionCallbacks:
     def __init__(self, accept_transfer: Callable[[dict, list[dict]], str | None],
                  status: Callable[[str], None], progress: Callable[[str, int], None],
                  transfer_finished: Callable[[bool], None],
-                 receive_finished: Callable[[], None] = lambda: None):
+                 receive_finished: Callable[[], None] = lambda: None,
+                 result_finished: Callable[[TransferResult], None] | None = None):
         self.accept_transfer = accept_transfer
         self.status = status
         self.progress = progress
         self.transfer_finished = transfer_finished
         self.receive_finished = receive_finished
+        self.result_finished = result_finished
 
 
 def _local_address(address: str) -> bool:
@@ -63,6 +79,7 @@ class NetworkManager:
         self.running = True
         self._link_condition = threading.Condition()
         self._links: set[tuple[str, str]] = set()
+        self._authorizations: dict[tuple[str, str], RouteAuthorization] = {}
         self._send_lock = threading.Lock()
         self._receive_lock = threading.Lock()
         self._server_context = self._make_server_context()
@@ -120,17 +137,27 @@ class NetworkManager:
             logger.exception("Connection failed phase=%s remote=%s:%d local=%s", phase, peer.host, peer.port, local_address)
             (wrapped or raw).close()
             hint = " Check the receiver app and Windows Firewall access for Python." if phase == "tcp_connect" else ""
-            raise NetworkError(f"{phase} to {peer.host}:{peer.port}: {exc}.{hint}") from exc
+            raise NetworkError(f"{phase} to {peer.host}:{peer.port}: {exc}.{hint}", phase=phase,
+                               retryable=phase == "tcp_connect") from exc
+
+    def authorize_route(self, remote_address: str, transport: Transport, session_id: str,
+                        ttl: float = 120, local_address: str | None = None) -> None:
+        if not _local_address(remote_address):
+            raise ValueError("Route authorization must use a local address")
+        authorization = RouteAuthorization(remote_address, transport, session_id,
+                                           time.monotonic() + ttl, local_address)
+        with self._link_condition:
+            self._authorizations[(remote_address, session_id)] = authorization
+            self._link_condition.notify_all()
 
     def register_link(self, local_address: str, remote_address: str) -> None:
-        """Allow inbound sockets only on endpoints reported by Wi-Fi Direct."""
-        with self._link_condition:
-            self._links.add((local_address, remote_address))
-            self._link_condition.notify_all()
+        """Compatibility wrapper for a Wi-Fi Direct route authorization."""
+        self.authorize_route(remote_address, Transport.WIFI_DIRECT, "wifi-direct", 330, local_address)
 
     def clear_links(self) -> None:
         with self._link_condition:
             self._links.clear()
+            self._authorizations.clear()
 
     def _accept_loop(self) -> None:
         while self.running:
@@ -146,13 +173,18 @@ class NetworkManager:
         endpoint = (raw.getsockname()[0], address[0])
         with self._link_condition:
             # A queued Qt endpoint notification may arrive just after TCP accept.
+            def authorized():
+                now = time.monotonic()
+                self._authorizations = {key: value for key, value in self._authorizations.items()
+                                        if value.expires_at > now}
+                return any(value.remote_address == address[0] for value in self._authorizations.values())
             allowed = self._link_condition.wait_for(
-                lambda: any(remote == address[0] for _local, remote in self._links) or not self.running,
+                lambda: authorized() or not self.running,
                 2,
             )
-            allowed = allowed and self.running and any(remote == address[0] for _local, remote in self._links)
+            allowed = allowed and self.running and authorized()
         if not allowed:
-            logger.warning("Rejected socket outside an active Wi-Fi Direct link: %s", endpoint)
+            logger.warning("Rejected socket outside an authorized transfer route: %s", endpoint)
             raw.close()
             return
         sock = None
@@ -195,6 +227,8 @@ class NetworkManager:
         def work():
             transfer_id = uuid.uuid4().hex
             succeeded = False
+            offer_sent = False
+            failure: Exception | None = None
             sock = None
             phase = "manifest"
             try:
@@ -242,6 +276,7 @@ class NetworkManager:
                 self.callbacks.status("File offer sent. Waiting for the receiver to accept (up to 5 minutes)...")
                 logger.info("Transfer %s waiting for approval remote=%s:%d", transfer_id, peer.host, peer.port)
                 send_control(sock, offer)
+                offer_sent = True
                 _, decision = recv_frame(sock)
                 if not decision.get("accepted"):
                     raise NetworkError(decision.get("reason", "Transfer declined"))
@@ -272,6 +307,7 @@ class NetworkManager:
                 self.callbacks.progress(transfer_id, 100)
                 succeeded = True
             except Exception as exc:
+                failure = exc
                 logger.exception("Transfer %s failed phase=%s remote=%s:%d", transfer_id, phase, peer.host, peer.port)
                 self.callbacks.status(f"Transfer failed during {phase}: {exc}")
             finally:
@@ -281,6 +317,11 @@ class NetworkManager:
                 except Exception:
                     pass
                 self._send_lock.release()
+                if self.callbacks.result_finished:
+                    phase_value = next((value for value in TransferPhase if value.value == phase), TransferPhase.CONNECT)
+                    retryable = isinstance(failure, NetworkError) and getattr(failure, "retryable", False)
+                    self.callbacks.result_finished(TransferResult(succeeded, TransferPhase.COMPLETE if succeeded else phase_value,
+                                                                  retryable, offer_sent, "" if succeeded else str(failure)))
                 self.callbacks.transfer_finished(succeeded)
         threading.Thread(target=work, daemon=True).start()
 

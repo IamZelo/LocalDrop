@@ -4,12 +4,16 @@ import asyncio
 import logging
 import platform
 import sys
+import tempfile
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from qasync import QEventLoop
 
 from .native_radio import NativeRadio
 from .winrt_radio import missing_modules
+from .hotspot import HotspotBackend
+from .discovery import _ipv4_addresses
 
 
 def main() -> int:
@@ -23,6 +27,9 @@ def main() -> int:
     print(f"Executable: {sys.executable}")
     print(f"Missing WinRT modules: {missing_modules() or 'none'}")
     print("Radio backend policy: Python WinRT only (no helper fallback)")
+    hotspot_ok, hotspot_reason = HotspotBackend(Path(tempfile.gettempdir()) / "lss-diagnostic.json").capability()
+    print(f"Package identity / wiFiControl: {'available' if hotspot_ok else 'unavailable'} ({hotspot_reason})")
+    print(f"mDNS IPv4 address count: {len(_ipv4_addresses())}")
 
     startup = {"ready": False, "failed": False}
 
