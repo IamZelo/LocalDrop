@@ -14,7 +14,9 @@ from .identity import unb64
 from .protocol import SERVICE_TYPE
 
 DISCOVERY_VERSION = 1
-STALE_AFTER = 45.0
+# Zeroconf host records commonly use a 120-second TTL.  Expiring observations
+# sooner can remove a healthy peer before the browser receives its refresh.
+STALE_AFTER = 180.0
 
 
 def _usable_ipv4(address: str, *, remote: bool = False) -> bool:
@@ -36,6 +38,20 @@ def _ipv4_addresses() -> list[bytes]:
                 addresses.add(address)
     except OSError:
         pass
+    # On macOS, getaddrinfo(hostname) may contain only loopback even while a
+    # usable Wi-Fi address exists. A UDP connect selects an interface without
+    # transmitting a packet and exposes the primary route address.
+    for probe in (("192.0.2.1", 9), ("198.51.100.1", 9)):
+        candidate = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            candidate.connect(probe)
+            address = candidate.getsockname()[0]
+            if _usable_ipv4(address):
+                addresses.add(address)
+        except OSError:
+            pass
+        finally:
+            candidate.close()
     if not addresses:
         addresses.add("127.0.0.1")
     return [socket.inet_aton(address) for address in sorted(addresses)]

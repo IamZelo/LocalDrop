@@ -428,7 +428,7 @@ class MainWindow(QMainWindow):
         for peer in peers:
             # Discovery metadata is necessary but transfer authentication still
             # occurs through signed offers and pinned TLS.
-            self.network.authorize_route(peer.host, Transport.LAN, f"mdns:{peer.device_id}", ttl=60)
+            self.network.authorize_route(peer.host, Transport.LAN, f"mdns:{peer.device_id}", ttl=240)
         self.refresh_nearby_devices()
 
     def handle_wifi_connected(self, event: dict) -> None:

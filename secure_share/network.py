@@ -149,6 +149,8 @@ class NetworkManager:
         with self._link_condition:
             self._authorizations[(remote_address, session_id)] = authorization
             self._link_condition.notify_all()
+        logger.debug("Authorized %s route remote=%s session=%s ttl=%ss",
+                     transport.value, remote_address, session_id, ttl)
 
     def register_link(self, local_address: str, remote_address: str) -> None:
         """Compatibility wrapper for a Wi-Fi Direct route authorization."""
@@ -184,7 +186,10 @@ class NetworkManager:
             )
             allowed = allowed and self.running and authorized()
         if not allowed:
-            logger.warning("Rejected socket outside an authorized transfer route: %s", endpoint)
+            with self._link_condition:
+                expected = sorted({value.remote_address for value in self._authorizations.values()})
+            logger.warning("Rejected socket outside an authorized transfer route: %s; expected sources=%s",
+                           endpoint, expected)
             raw.close()
             return
         sock = None
