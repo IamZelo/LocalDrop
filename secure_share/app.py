@@ -10,17 +10,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QCheckBox,
     QProgressBar,
     QPushButton,
@@ -42,6 +42,10 @@ from .network import InteractionCallbacks, NetworkManager, TransferApproval
 from .storage import LocalStore
 
 logger = logging.getLogger("secure_share.app")
+DEVICE_DATA_ROLE = Qt.UserRole
+DEVICE_TRUSTED_ROLE = Qt.UserRole + 1
+DEVICE_ONLINE_ROLE = Qt.UserRole + 2
+DEVICE_ID_ROLE = Qt.UserRole + 3
 
 
 @dataclass
@@ -190,9 +194,10 @@ class MainWindow(QMainWindow):
         root.addLayout(file_actions)
 
         device_header = QHBoxLayout()
-        device_header.addWidget(QLabel("2. Click a nearby device to send"))
-        self.trusted_button = QPushButton("Trusted devices")
-        device_header.addWidget(self.trusted_button)
+        self.device_instruction = QLabel("2. Add files first, then select a device")
+        device_header.addWidget(self.device_instruction)
+        self.refresh_button = QPushButton("Refresh")
+        device_header.addWidget(self.refresh_button)
         device_header.addStretch()
         self.radio_status = QLabel("Wi-Fi Direct starting..." if sys.platform == "win32" else "LAN only")
         self.radio_status.setStyleSheet("color: #666")
@@ -201,7 +206,12 @@ class MainWindow(QMainWindow):
 
         self.devices = QListWidget()
         self.devices.setMinimumHeight(210)
-        self.devices.setStyleSheet("QListWidget::item { padding: 12px; } QListWidget::item:selected { border-radius: 6px; }")
+        self.devices.setStyleSheet(
+            "QListWidget::item { padding: 12px; }"
+            "QListWidget::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }"
+            "QListWidget::item:selected:!active { background: #1d4ed8; color: #ffffff; }"
+        )
+        self.devices.setContextMenuPolicy(Qt.CustomContextMenu)
         root.addWidget(self.devices)
 
         self.progress = QProgressBar()
@@ -234,7 +244,8 @@ class MainWindow(QMainWindow):
         self.file_list.files_dropped.connect(self.add_paths)
         self.add_button.clicked.connect(self.pick_files)
         self.remove_button.clicked.connect(self.remove_files)
-        self.trusted_button.clicked.connect(self.show_trusted_devices)
+        self.refresh_button.clicked.connect(self.refresh_devices)
+        self.devices.customContextMenuRequested.connect(self.show_device_menu)
         self.devices.itemClicked.connect(self.device_clicked)
 
     @Slot(object)
@@ -249,6 +260,7 @@ class MainWindow(QMainWindow):
                 existing.add(str(path.resolve()))
         if self.paths:
             self.status.setText("Files ready. Click a nearby device to send.")
+        self.refresh_nearby_devices()
 
     def pick_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, "Choose files")
@@ -261,61 +273,49 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.file_list.takeItem(row)
             self.paths.pop(row)
+        self.refresh_nearby_devices()
 
-    def show_trusted_devices(self) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Trusted Devices")
-        layout = QVBoxLayout(dialog)
-        devices = QListWidget()
-        layout.addWidget(devices)
-        peers = {peer["device_id"]: peer for peer in self.store.peers()}
-        for peer in sorted(peers.values(), key=lambda value: value["name"].casefold()):
-            stats = self.store.route_stats(peer["device_id"])
-            successes = sum(row["successes"] for row in stats)
-            failures = sum(row["failures"] for row in stats)
-            automatic = "auto-accept on" if peer.get("auto_accept") else "approval required"
-            item = QListWidgetItem(
-                f"{peer['name']} | {automatic} | routes {successes} ok / {failures} failed | "
-                f"last seen {peer.get('last_seen') or 'unknown'}"
-            )
-            item.setData(Qt.UserRole, peer["device_id"])
-            devices.addItem(item)
-        actions = QHBoxLayout()
-        disable = QPushButton("Disable auto-accept")
-        block = QPushButton("Block")
-        forget = QPushButton("Forget")
-        close = QPushButton("Close")
-        for button in (disable, block, forget, close):
-            actions.addWidget(button)
-        layout.addLayout(actions)
-
-        def selected_id() -> str | None:
-            item = devices.currentItem()
-            return str(item.data(Qt.UserRole)) if item else None
-
-        disable.clicked.connect(lambda: self._update_trusted_device(selected_id(), "disable", dialog))
-        block.clicked.connect(lambda: self._update_trusted_device(selected_id(), "block", dialog))
-        forget.clicked.connect(lambda: self._update_trusted_device(selected_id(), "forget", dialog))
-        close.clicked.connect(dialog.accept)
-        dialog.exec()
-
-    def _update_trusted_device(self, device_id: str | None, action: str, dialog: QDialog) -> None:
+    def show_device_menu(self, position) -> None:
+        item = self.devices.itemAt(position)
+        if not item or not item.data(DEVICE_TRUSTED_ROLE):
+            return
+        menu = QMenu(self)
+        revoke = menu.addAction("Revoke trust")
+        if menu.exec(self.devices.mapToGlobal(position)) is not revoke:
+            return
+        device_id = item.data(DEVICE_DATA_ROLE)
         if not device_id:
             return
-        if action == "disable":
-            self.store.set_auto_accept(device_id, False)
-        elif action == "block":
-            self.store.set_blocked(device_id, True)
-        elif action == "forget":
-            self.store.forget_peer(device_id)
-        dialog.accept()
+        answer = QMessageBox.question(
+            self, "Revoke trust",
+            "Revoke trust for this device? Future transfers will require approval and establish trust again.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.store.revoke_trust(str(item.data(DEVICE_ID_ROLE)))
+        self.status.setText("Device trust revoked. Transfer history was kept.")
         self.refresh_nearby_devices()
+
+    def refresh_devices(self) -> None:
+        if self.workflow_active or self.receiving:
+            return
+        self.status.setText("Refreshing nearby devices...")
+        if hasattr(self, "discovery"):
+            self.discovery.refresh_registration()
+            self.discovery.prune()
+        self.refresh_nearby_devices()
+        if self.radio and self.radio_ready and not self.scan_pending:
+            self.scan_radios()
+        else:
+            self.status.setText("Nearby device list refreshed.")
 
     def set_busy(self, busy: bool) -> None:
         self.devices.setEnabled(not busy)
         self.add_button.setEnabled(not busy)
         self.remove_button.setEnabled(not busy)
         self.file_list.setEnabled(not busy)
+        self.refresh_button.setEnabled(not busy)
 
     @Slot(QListWidgetItem)
     def device_clicked(self, item: QListWidgetItem) -> None:
@@ -464,30 +464,58 @@ class MainWindow(QMainWindow):
 
     def refresh_nearby_devices(self) -> None:
         self.devices.clear()
+        files_ready = bool(self.paths)
+        self.device_instruction.setText(
+            "2. Select a device to send" if files_ready
+            else "2. Add files first, then select a device"
+        )
+        self.device_instruction.setStyleSheet(
+            "font-weight: 650; color: #2563eb" if files_ready else "color: #666"
+        )
         lan_ids = set()
         for device_id, peer in sorted(getattr(self, "lan_peers", {}).items(), key=lambda entry: entry[1].display_name):
-            item = QListWidgetItem(f"{peer.display_name}  |  Same network")
-            item.setData(Qt.UserRole, f"lan:{device_id}")
+            trusted = bool(self.store.peer(device_id))
+            trust_label = "  |  Trusted" if trusted else ""
+            item = QListWidgetItem(f"{peer.display_name}{trust_label}  |  Same network")
+            item.setData(DEVICE_DATA_ROLE, f"lan:{device_id}")
+            item.setData(DEVICE_TRUSTED_ROLE, trusted)
+            item.setData(DEVICE_ONLINE_ROLE, True)
+            item.setData(DEVICE_ID_ROLE, device_id)
+            if not files_ready:
+                item.setForeground(QColor("#8a8f98"))
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                item.setToolTip("Add one or more files before selecting a device")
             self.devices.addItem(item)
             lan_ids.add(device_id)
         for radio_id, peer in sorted(self.radio_peers.items(), key=lambda entry: entry[1].get("name", "")):
             if peer.get("device_id") in lan_ids:
                 continue
-            item = QListWidgetItem(f"{peer.get('name') or 'Nearby computer'}  |  Wi-Fi Direct")
-            item.setData(Qt.UserRole, radio_id)
+            device_id = peer.get("device_id")
+            trusted = bool(device_id and self.store.peer(device_id))
+            trust_label = "  |  Trusted" if trusted else ""
+            item = QListWidgetItem(f"{peer.get('name') or 'Nearby computer'}{trust_label}  |  Wi-Fi Direct")
+            item.setData(DEVICE_DATA_ROLE, radio_id)
+            item.setData(DEVICE_TRUSTED_ROLE, trusted)
+            item.setData(DEVICE_ONLINE_ROLE, True)
+            item.setData(DEVICE_ID_ROLE, device_id)
+            if not files_ready:
+                item.setForeground(QColor("#8a8f98"))
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                item.setToolTip("Add one or more files before selecting a device")
             self.devices.addItem(item)
         online_ids = lan_ids | {peer.get("device_id") for peer in self.radio_peers.values()}
         recent = [peer for peer in self.store.peers()
                   if peer["device_id"] not in online_ids and peer.get("last_seen")]
-        if recent:
-            heading = QListWidgetItem("Recent devices (offline)")
-            heading.setFlags(heading.flags() & ~Qt.ItemIsEnabled)
-            self.devices.addItem(heading)
-            for peer in sorted(recent, key=lambda value: value.get("last_seen") or "", reverse=True):
-                item = QListWidgetItem(f"{peer['name']}  |  Offline")
-                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-                self.devices.addItem(item)
-        if not self.radio_peers and not getattr(self, "lan_peers", {}):
+        for peer in sorted(recent, key=lambda value: value.get("last_seen") or "", reverse=True):
+            item = QListWidgetItem(f"{peer['name']}  |  Trusted  |  Offline")
+            item.setData(DEVICE_TRUSTED_ROLE, True)
+            item.setData(DEVICE_ONLINE_ROLE, False)
+            item.setData(DEVICE_ID_ROLE, peer["device_id"])
+            item.setForeground(QColor("#8a8f98"))
+            item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+            item.setToolTip("This trusted device is currently offline")
+            self.devices.addItem(item)
+        if not self.radio_peers and not getattr(self, "lan_peers", {}) and not recent:
             item = QListWidgetItem("No nearby computers yet. Keep Wi-Fi and this app on on both PCs.")
             item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
             self.devices.addItem(item)

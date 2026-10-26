@@ -75,3 +75,30 @@ class WorkflowTests(unittest.TestCase):
         self.window.handle_radio_event({"event": "wifi_direct_peer", "id": "new", "port": 63151,
             "device_id": "peer", "public_key": base64.urlsafe_b64encode(b"x" * 32).decode()})
         self.assertEqual(list(self.window.radio_peers), ["new"])
+
+    def test_refresh_updates_lan_and_starts_available_radio_scan(self):
+        self.window.workflow_active = False
+        self.window.receiving = False
+        self.window.discovery = Mock()
+        self.window.scan_radios = Mock()
+        self.window.refresh_devices()
+        self.window.discovery.refresh_registration.assert_called_once_with()
+        self.window.discovery.prune.assert_called_once_with()
+        self.window.refresh_nearby_devices.assert_called_once_with()
+        self.window.scan_radios.assert_called_once_with()
+
+    def test_refresh_is_ignored_during_transfer(self):
+        self.window.discovery = Mock()
+        self.window.scan_radios = Mock()
+        self.window.refresh_devices()
+        self.window.discovery.refresh_registration.assert_not_called()
+        self.window.scan_radios.assert_not_called()
+
+    def test_device_click_requires_staged_files(self):
+        item = Mock()
+        item.data.return_value = "lan:peer"
+        self.window.paths = []
+        self.window.workflow_active = False
+        self.window.device_clicked(item)
+        self.window.network.send_files.assert_not_called()
+        self.window.status.setText.assert_called_with("Drop or add files before selecting a device.")

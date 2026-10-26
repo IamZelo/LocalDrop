@@ -161,6 +161,12 @@ class LocalStore:
             self.db.execute("DELETE FROM route_stats WHERE device_id=?", (device_id,))
             self.db.commit()
 
+    def revoke_trust(self, device_id: str) -> None:
+        """Remove identity pinning and auto-accept without erasing history or route learning."""
+        with self.lock:
+            self.db.execute("DELETE FROM peers WHERE device_id=?", (device_id,))
+            self.db.commit()
+
     def record_transfer(self, transfer_id: str, peer_id: str, direction: str, details: dict, status: str) -> None:
         encrypted = self.cipher.encrypt(json.dumps(details).encode())
         with self.lock:

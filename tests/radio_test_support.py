@@ -41,13 +41,13 @@ def load(name):
     }
     if name == "app":
         core = module("PySide6.QtCore", QObject=object, QStandardPaths=Mock(),
-            Qt=types.SimpleNamespace(UserRole=1, ItemIsEnabled=2), QTimer=Mock(),
+            Qt=types.SimpleNamespace(UserRole=1, ItemIsEnabled=2, ItemIsSelectable=4, CustomContextMenu=3), QTimer=Mock(),
             Signal=lambda *args: Mock(), Slot=lambda *args: lambda fn: fn)
-        gui = module("PySide6.QtGui", QCloseEvent=object, QDragEnterEvent=object, QDropEvent=object)
+        gui = module("PySide6.QtGui", QColor=Mock(), QCloseEvent=object, QDragEnterEvent=object, QDropEvent=object)
         widgets = module("PySide6.QtWidgets", **{key: type(key, (), {}) for key in
             ("QApplication", "QFileDialog", "QHBoxLayout", "QLabel", "QListWidget", "QListWidgetItem",
-             "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget", "QDialog",
-             "QCheckBox")})
+             "QMainWindow", "QMessageBox", "QProgressBar", "QPushButton", "QVBoxLayout", "QWidget",
+             "QCheckBox", "QMenu")})
         replacements.update({"PySide6": module("PySide6"), "PySide6.QtCore": core,
             "PySide6.QtGui": gui, "PySide6.QtWidgets": widgets,
             "qasync": module("qasync", QEventLoop=Mock()),
