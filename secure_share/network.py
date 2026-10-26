@@ -269,8 +269,9 @@ class NetworkManager:
                         if attempt == CONNECT_ATTEMPTS:
                             raise
                         logger.warning(
-                            "Wi-Fi Direct route is not ready; retrying TCP connection in %ss: %s",
-                            CONNECT_RETRY_DELAY,
+                            "%s route is not ready; retrying TCP connection in %ss: %s",
+                            getattr(getattr(peer, "transport", Transport.WIFI_DIRECT), "value", "route")
+                            .replace("_", " ").title(), CONNECT_RETRY_DELAY,
                             exc,
                         )
                         time.sleep(CONNECT_RETRY_DELAY)

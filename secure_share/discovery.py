@@ -30,31 +30,32 @@ def _usable_ipv4(address: str, *, remote: bool = False) -> bool:
 
 
 def _ipv4_addresses() -> list[bytes]:
-    addresses: set[str] = set()
-    try:
-        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
-            address = result[4][0]
-            if _usable_ipv4(address):
-                addresses.add(address)
-    except OSError:
-        pass
-    # On macOS, getaddrinfo(hostname) may contain only loopback even while a
-    # usable Wi-Fi address exists. A UDP connect selects an interface without
-    # transmitting a packet and exposes the primary route address.
+    addresses: list[str] = []
+
+    def add(address: str) -> None:
+        if _usable_ipv4(address) and address not in addresses:
+            addresses.append(address)
+
+    # Put the default-route interface first. This prevents WSL, Hyper-V, VPN,
+    # and hotspot adapters from becoming the preferred LAN endpoint merely
+    # because their numeric address sorts first.
     for probe in (("192.0.2.1", 9), ("198.51.100.1", 9)):
         candidate = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             candidate.connect(probe)
-            address = candidate.getsockname()[0]
-            if _usable_ipv4(address):
-                addresses.add(address)
+            add(candidate.getsockname()[0])
         except OSError:
             pass
         finally:
             candidate.close()
+    try:
+        for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            add(result[4][0])
+    except OSError:
+        pass
     if not addresses:
-        addresses.add("127.0.0.1")
-    return [socket.inet_aton(address) for address in sorted(addresses)]
+        addresses.append("127.0.0.1")
+    return [socket.inet_aton(address) for address in addresses]
 
 
 @dataclass(frozen=True)
