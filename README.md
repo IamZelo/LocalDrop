@@ -1,10 +1,12 @@
 # Local Secure Share
 
-A local file-sharing application for Windows 11 and macOS. It discovers peers on the existing LAN immediately. Windows can fall back to in-process Python WinRT Wi-Fi Direct for another Windows peer; macOS is strictly LAN-only. Bluetooth is not used. There is no internet relay, cloud service, or account server.
+A local file-sharing application for Windows 11, macOS, and Linux. It discovers peers on the existing LAN immediately. Windows can fall back to in-process Python WinRT Wi-Fi Direct for another Windows peer; macOS and Linux are strictly LAN-only. Bluetooth is not used. There is no internet relay, cloud service, or account server.
 
 ## Setup on both computers
 
-Use Python 3.12 or newer and install the same application version on both PCs:
+Use Python 3.12 or newer and install the same application version on both computers.
+
+### Windows
 
 ```powershell
 python -m venv .venv
@@ -13,7 +15,25 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Keep Wi-Fi enabled and the application open on both computers. On Windows, the packaged manifest declares the Wi-Fi Direct device capability. macOS never loads WinRT or starts wireless-direct discovery.
+### Linux
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Keep Wi-Fi enabled and the application open on both computers. On Windows, the packaged manifest declares the Wi-Fi Direct device capability. macOS and Linux never load WinRT or start wireless-direct discovery.
 
 Allow this Python executable's inbound connections in Windows Firewall on the network profile used by the Wi-Fi Direct interface. The application logs its actual listening port at startup. Do not disable the firewall. Windows Mobile Hotspot can interfere with Wi-Fi Direct; turn it off when diagnosing connection failures.
 
