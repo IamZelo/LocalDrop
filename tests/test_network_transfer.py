@@ -196,3 +196,37 @@ class NetworkTransferTests(unittest.TestCase):
             self.assertEqual((Path(directory) / "one.txt").read_bytes(), first)
             self.assertFalse((Path(directory) / "two.txt").exists())
             self.assertFalse((Path(directory) / "two.txt.part").exists())
+
+    def test_auto_accepted_receive_returns_completion_details(self):
+        payload = b"file contents"
+        self.manager.store.peer.return_value = {
+            "device_id": "sender", "name": "Sender", "public_key": "public",
+            "blocked": False, "auto_accept": True,
+        }
+        offer = {
+            "type": "offer", "signature": "signature", "time": int(time.time()),
+            "transfer_id": uuid.uuid4().hex,
+            "sender": {"device_id": "sender", "name": "Sender", "public_key": "public"},
+            "files": [{
+                "name": "example.txt", "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }],
+        }
+        frames = [
+            ("json", {"type": "file_start", "index": 0}),
+            ("chunk", payload),
+            ("json", {"type": "file_end", "index": 0}),
+            ("json", {"type": "transfer_end"}),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            with patch.object(network, "_automatic_destination", return_value=destination), \
+                    patch.object(network, "recv_frame", side_effect=frames):
+                completion = self.manager._receive_files(self.sock, offer)
+
+            self.assertEqual((destination / "example.txt").read_bytes(), payload)
+
+        self.assertEqual(completion, network.ReceiveCompletion(
+            "Sender", 1, len(payload), str(destination)
+        ))
+        self.manager.callbacks.accept_transfer.assert_not_called()

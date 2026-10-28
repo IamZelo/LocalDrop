@@ -64,7 +64,7 @@ class UiBridge(QObject):
     transfer_offer = Signal(object)
     transfer_finished = Signal(bool)
     transfer_result = Signal(object)
-    receive_finished = Signal()
+    receive_finished = Signal(object)
     receive_started = Signal()
     radio_event = Signal(object)
     discovery_changed = Signal(object)
@@ -160,6 +160,21 @@ def _readable_duration(seconds: float | None) -> str:
         return f"{minutes}m {remainder:02d}s remaining"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m remaining"
+
+
+def _readable_elapsed(seconds: float) -> str:
+    rounded = max(0, int(seconds + 0.5))
+    if rounded < 60:
+        unit = "second" if rounded == 1 else "seconds"
+        return f"{rounded} {unit}"
+    minutes, remainder = divmod(rounded, 60)
+    if minutes < 60:
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} {remainder:02d} seconds"
+    hours, minutes = divmod(minutes, 60)
+    hour_unit = "hour" if hours == 1 else "hours"
+    minute_unit = "minute" if minutes == 1 else "minutes"
+    return f"{hours} {hour_unit} {minutes:02d} {minute_unit}"
 
 
 class DeviceRow(QWidget):
@@ -268,6 +283,7 @@ class MainWindow(QMainWindow):
         self.attempt_id = None
         self.selected_endpoint = None
         self.send_started = False
+        self.send_started_at: float | None = None
         self.paths: list[Path] = []
         self.workflow_active = False
         self.pending_radio_id: str | None = None
@@ -481,9 +497,21 @@ class MainWindow(QMainWindow):
     def _apply_device_list_theme(self) -> None:
         palette = self.palette()
         border = palette.color(QPalette.Mid).name()
-        hover = palette.color(QPalette.AlternateBase).name()
         selected = palette.color(QPalette.Highlight).name()
         selected_text = palette.color(QPalette.HighlightedText).name()
+        
+        # Grab the base window background color
+        base_color = palette.color(QPalette.Base)
+        
+        # Check if the theme is Light or Dark based on text luminance
+        is_dark_mode = palette.color(QPalette.Text).value() > 128
+        
+        # Generate a high-contrast hover color relative to the background
+        if is_dark_mode:
+            hover = base_color.lighter(130).name()
+        else:
+            hover = base_color.darker(110).name()
+            
         self.devices.setStyleSheet(
             f"QListWidget {{ border: 1px solid {border}; border-radius: 9px; padding: 5px; }}"
             "QListWidget::item { border-radius: 7px; margin: 2px; }"
@@ -715,6 +743,7 @@ class MainWindow(QMainWindow):
             if not peer:
                 self.status.setText("Device no longer available. Waiting for a fresh LAN announcement.")
                 return
+            self.send_started_at = time.monotonic()
             self.workflow_active, self.send_started = True, True
             self.set_transfer_transport(Transport.LAN)
             self.attempt_id = uuid.uuid4().hex
@@ -736,6 +765,7 @@ class MainWindow(QMainWindow):
         if not peer:
             self.status.setText("Device no longer available. Waiting for a fresh scan.")
             return
+        self.send_started_at = time.monotonic()
         self.attempt_id = uuid.uuid4().hex
         self.set_transfer_transport(Transport.WIFI_DIRECT)
         self.selected_endpoint = dict(peer)
@@ -1068,10 +1098,16 @@ class MainWindow(QMainWindow):
         self.receiving = True
         self.set_busy(True)
 
-    @Slot()
-    def finish_receive(self) -> None:
+    @Slot(object)
+    def finish_receive(self, completion=None) -> None:
         if self.receiving:
             self.reset_workflow(reset_link=False)
+        if completion is not None:
+            file_word = "file" if completion.file_count == 1 else "files"
+            self.status.setText(
+                f"Received {completion.file_count} {file_word} from {completion.sender_name}. "
+                f"Saved to {completion.destination}."
+            )
 
     @Slot(bool)
     def finish_transfer(self, succeeded: bool) -> None:
@@ -1083,6 +1119,20 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def finish_transfer_result(self, result) -> None:
         if result.succeeded:
+            recipient = (self.selected_endpoint or {}).get("name", "nearby device")
+            file_count = len(self.paths)
+            total_size = sum(path.stat().st_size for path in self.paths)
+            elapsed = (time.monotonic() - self.send_started_at
+                       if self.send_started_at is not None else 0.0)
+            if file_count == 1:
+                summary = f"{self.paths[0].name} ({_readable_size(total_size)})"
+            else:
+                summary = f"{file_count} files ({_readable_size(total_size)})"
+            QMessageBox.information(
+                self,
+                "Files sent",
+                f"{summary} sent to {recipient} in {_readable_elapsed(elapsed)}.",
+            )
             self.finish_transfer(True)
             return
         if getattr(result, "cancelled", False):
@@ -1131,6 +1181,7 @@ class MainWindow(QMainWindow):
         self.attempt_id = None
         self.selected_endpoint = None
         self.send_started = False
+        self.send_started_at = None
         self.set_transfer_transport(None)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)

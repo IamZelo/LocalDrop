@@ -54,6 +54,14 @@ class TransferProgress:
     eta_seconds: float | None
 
 
+@dataclass(frozen=True)
+class ReceiveCompletion:
+    sender_name: str
+    file_count: int
+    total_bytes: int
+    destination: str
+
+
 class _ProgressTracker:
     """Build throttled progress snapshots from a short rolling speed window."""
 
@@ -119,7 +127,7 @@ class InteractionCallbacks:
     def __init__(self, accept_transfer: Callable[[dict, list[dict]], TransferApproval | str | None],
                  status: Callable[[str], None], progress: Callable[[TransferProgress], None],
                  transfer_finished: Callable[[bool], None],
-                 receive_finished: Callable[[], None] = lambda: None,
+                 receive_finished: Callable[[ReceiveCompletion | None], None] = lambda _result: None,
                  result_finished: Callable[[TransferResult], None] | None = None,
                  route_started: Callable[[Transport], None] | None = None,
                  trust_changed: Callable[[], None] | None = None,
@@ -330,6 +338,7 @@ class NetworkManager:
         with self._transfer_state_lock:
             self._receive_cancel_event = cancel_event
             self._receive_socket = raw
+        completion = None
         try:
             if self.callbacks.route_started and authorization:
                 self.callbacks.route_started(authorization.transport)
@@ -343,7 +352,7 @@ class NetworkManager:
             if kind != "json":
                 raise NetworkError("Expected a control message")
             if first.get("type") == "offer":
-                self._receive_files(sock, first, cancel_event)
+                completion = self._receive_files(sock, first, cancel_event)
             else:
                 raise NetworkError("Unknown request")
         except TransferCancelled:
@@ -361,7 +370,7 @@ class NetworkManager:
             if receiving:
                 self._receive_lock.release()
             if receiving or not self._receive_lock.locked():
-                self.callbacks.receive_finished()
+                self.callbacks.receive_finished(completion)
             try:
                 (sock or raw).close()
             except OSError:
@@ -518,7 +527,7 @@ class NetworkManager:
         threading.Thread(target=work, daemon=True).start()
 
     def _receive_files(self, sock, offer: dict,
-                       cancel_event: threading.Event | None = None) -> None:
+                       cancel_event: threading.Event | None = None) -> ReceiveCompletion | None:
         cancel_event = cancel_event or threading.Event()
         self._check_cancelled(cancel_event, "offer")
         signature = offer.pop("signature", "")
@@ -560,7 +569,7 @@ class NetworkManager:
                   else self.callbacks.accept_transfer(offered_by, offer["files"]))
         if not folder:
             send_control(sock, {"type": "decision", "accepted": False, "reason": "Transfer declined"})
-            return
+            return None
         self._check_cancelled(cancel_event, "receiver_approval")
         approval = folder if isinstance(folder, TransferApproval) else TransferApproval(str(folder))
         destination_dir = Path(approval.destination)
@@ -634,6 +643,7 @@ class NetworkManager:
         send_control(sock, {"type": "result", "status": "complete"})
         self.store.record_transfer(offer["transfer_id"], sender["device_id"], "received", {"files": offer["files"]}, "complete")
         self.callbacks.status(f"Received {len(completed)} file(s) from {sender_name}")
+        return ReceiveCompletion(sender_name, len(completed), total, str(destination_dir))
 
     def close(self) -> None:
         self.running = False

@@ -1,5 +1,7 @@
 import base64
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from radio_test_support import load
@@ -206,6 +208,55 @@ class WorkflowTests(unittest.TestCase):
         app.MainWindow.begin_receive(self.window)
         self.assertTrue(self.window.receiving)
         self.window.set_busy.assert_called_once_with(True)
+
+    def test_receive_completion_is_shown_after_workflow_reset(self):
+        self.window.receiving = True
+        self.window.reset_workflow = Mock()
+        completion = SimpleNamespace(
+            file_count=2,
+            sender_name="Office Laptop",
+            destination=r"C:\Users\User\Downloads\Local Secure Share\Office Laptop",
+        )
+
+        app.MainWindow.finish_receive(self.window, completion)
+
+        self.window.reset_workflow.assert_called_once_with(reset_link=False)
+        self.window.status.setText.assert_called_once_with(
+            "Received 2 files from Office Laptop. Saved to "
+            r"C:\Users\User\Downloads\Local Secure Share\Office Laptop."
+        )
+
+    def test_successful_send_shows_file_and_elapsed_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.pdf"
+            path.write_bytes(b"content")
+            self.window.paths = [path]
+            self.window.selected_endpoint = {"name": "Office Laptop"}
+            self.window.send_started_at = 10.0
+            self.window.finish_transfer = Mock()
+            app.QMessageBox.information = Mock()
+
+            with patch.object(app.time, "monotonic", return_value=14.2):
+                app.MainWindow.finish_transfer_result(
+                    self.window, SimpleNamespace(succeeded=True)
+                )
+
+        app.QMessageBox.information.assert_called_once_with(
+            self.window,
+            "Files sent",
+            "report.pdf (7 B) sent to Office Laptop in 4 seconds.",
+        )
+        self.window.finish_transfer.assert_called_once_with(True)
+
+    def test_failed_send_does_not_show_success_popup(self):
+        self.window.finish_transfer = Mock()
+        app.QMessageBox.information = Mock()
+        result = SimpleNamespace(succeeded=False, cancelled=True)
+
+        app.MainWindow.finish_transfer_result(self.window, result)
+
+        app.QMessageBox.information.assert_not_called()
+        self.window.finish_transfer.assert_called_once_with(False)
 
     def test_refresh_animation_restores_button(self):
         self.window.refresh_in_progress = True
