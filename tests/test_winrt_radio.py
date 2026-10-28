@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import unittest
 from unittest.mock import Mock, AsyncMock
 from radio_test_support import load
@@ -6,6 +7,22 @@ from radio_test_support import load
 radio_module = load("winrt_radio")
 
 class WinRTRadioTests(unittest.IsolatedAsyncioTestCase):
+    def test_advertisement_name_round_trip_and_legacy_compatibility(self):
+        key = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
+        payload = radio_module._advertisement_payload(
+            "device-id", 43123, b"12345678", key, "Harsh's Laptop"
+        )
+        parsed = radio_module._parse_advertisement_payload(payload)
+        self.assertEqual(parsed[1:3], (43123, "device-id"))
+        self.assertEqual(parsed[4], "Harsh's Laptop")
+        legacy = payload[:-(1 + len("Harsh's Laptop"))]
+        self.assertEqual(radio_module._parse_advertisement_payload(legacy)[4], "")
+
+    def test_advertisement_rejects_oversized_profile_name(self):
+        key = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
+        with self.assertRaisesRegex(ValueError, "name is too long"):
+            radio_module._advertisement_payload("device", 43123, b"12345678", key, "x" * 81)
+
     def test_no_bluetooth_packages_required(self):
         self.assertFalse(any("bluetooth" in name for name in radio_module.REQUIRED_MODULES))
 

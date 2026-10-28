@@ -53,6 +53,7 @@ class TransferResult:
     message: str = ""
     attempt_id: str = ""
     transport: Transport | None = None
+    cancelled: bool = False
 
     @property
     def may_fallback(self) -> bool:

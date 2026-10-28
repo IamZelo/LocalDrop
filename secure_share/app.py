@@ -9,12 +9,13 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent, QPalette
+from PySide6.QtCore import QObject, QSize, QStandardPaths, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDropEvent, QIcon, QPalette, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -24,10 +25,12 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QProgressBar,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from qasync import QEventLoop
+from qt_material_icons import MaterialIcon
 
 from .discovery import DiscoveredPeer
 try:  # lightweight test boundaries may expose only the peer record
@@ -35,7 +38,7 @@ try:  # lightweight test boundaries may expose only the peer record
 except ImportError:  # pragma: no cover - used by isolated UI tests
     Discovery = None  # type: ignore[misc,assignment]
 from .connectivity import Transport
-from .identity import load_or_create_identity, unb64
+from .identity import load_or_create_identity, unb64, update_display_name
 if sys.platform == "win32":
     from .native_radio import NativeRadio
 from .network import InteractionCallbacks, NetworkManager, TransferApproval
@@ -57,11 +60,12 @@ class Request:
 
 class UiBridge(QObject):
     status_changed = Signal(str)
-    progress_changed = Signal(str, int)
+    progress_changed = Signal(object)
     transfer_offer = Signal(object)
     transfer_finished = Signal(bool)
     transfer_result = Signal(object)
     receive_finished = Signal()
+    receive_started = Signal()
     radio_event = Signal(object)
     discovery_changed = Signal(object)
     transport_changed = Signal(object)
@@ -85,6 +89,7 @@ class UiBridge(QObject):
 
 class DropList(QListWidget):
     files_dropped = Signal(object)
+    select_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -95,6 +100,32 @@ class DropList(QListWidget):
             "QListWidget { border: 2px dashed #8a8f98; border-radius: 10px; padding: 12px; }"
             "QListWidget:focus { border-color: #3478f6; }"
         )
+        self.placeholder = QLabel("Select your files", self.viewport())
+        self.placeholder.setAlignment(Qt.AlignCenter)
+        self.placeholder.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.placeholder.setStyleSheet(
+            "color: rgba(128, 128, 128, 150); background: transparent; "
+            "font-size: 18px; font-weight: 600;"
+        )
+        self.sync_empty_state()
+
+    def sync_empty_state(self) -> None:
+        self.placeholder.setVisible(self.count() == 0)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.placeholder.setGeometry(self.viewport().rect())
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.select_requested.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def clear(self) -> None:
+        super().clear()
+        self.sync_empty_state()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -109,6 +140,28 @@ class DropList(QListWidget):
         event.acceptProposedAction()
 
 
+def _readable_size(size: int | float) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size:,.0f} B"
+
+
+def _readable_duration(seconds: float | None) -> str:
+    if seconds is None or seconds < 0:
+        return "Estimating…"
+    rounded = int(seconds + 0.5)
+    if rounded < 60:
+        return f"{rounded}s remaining"
+    minutes, remainder = divmod(rounded, 60)
+    if minutes < 60:
+        return f"{minutes}m {remainder:02d}s remaining"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m remaining"
+
+
 class DeviceRow(QWidget):
     """Friendly two-column device row with transport detail and a status badge."""
 
@@ -120,16 +173,18 @@ class DeviceRow(QWidget):
         text = QVBoxLayout()
         text.setSpacing(2)
         name_label = QLabel(name)
-        name_label.setStyleSheet("font-size: 13px; font-weight: 650;")
+        muted_color = "#5f6368"
+        secondary_color = self.palette().color(QPalette.PlaceholderText).name()
         if muted:
-            palette = name_label.palette()
-            palette.setColor(QPalette.WindowText, palette.color(QPalette.PlaceholderText))
-            name_label.setPalette(palette)
+            name_label.setStyleSheet(
+                f"font-size: 13px; font-weight: 650; color: {muted_color};"
+            )
+        else:
+            name_label.setStyleSheet("font-size: 13px; font-weight: 650;")
         detail_label = QLabel(detail)
-        detail_label.setStyleSheet("font-size: 11px;")
-        detail_palette = detail_label.palette()
-        detail_palette.setColor(QPalette.WindowText, detail_palette.color(QPalette.PlaceholderText))
-        detail_label.setPalette(detail_palette)
+        detail_label.setStyleSheet(
+            f"font-size: 11px; color: {muted_color if muted else secondary_color};"
+        )
         text.addWidget(name_label)
         text.addWidget(detail_label)
         layout.addLayout(text)
@@ -143,12 +198,34 @@ class DeviceRow(QWidget):
                 "font-size: 11px; font-weight: 650;"
             )
         else:
-            foreground = self.palette().color(QPalette.PlaceholderText).name()
             badge.setStyleSheet(
-                f"color: {foreground}; background: transparent; "
+                f"color: {muted_color}; background: transparent; "
                 "font-size: 11px; font-weight: 650;"
             )
         layout.addWidget(badge)
+
+
+class FileRow(QWidget):
+    remove_requested = Signal(str)
+
+    def __init__(self, path: Path):
+        super().__init__()
+        self.path_key = str(path.resolve())
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 4, 4)
+        label = QLabel(f"{path.name}  ·  {_readable_size(path.stat().st_size)}")
+        label.setToolTip(str(path))
+        layout.addWidget(label, 1)
+        remove = QToolButton()
+        remove_icon = MaterialIcon("delete")
+        remove_icon.set_color(self.palette().color(QPalette.ButtonText))
+        remove.setIcon(remove_icon)
+        remove.setIconSize(QSize(16, 16))
+        remove.setAutoRaise(True)
+        remove.setToolTip(f"Remove {path.name} from this transfer")
+        remove.setAccessibleName(f"Remove {path.name}")
+        remove.clicked.connect(lambda: self.remove_requested.emit(self.path_key))
+        layout.addWidget(remove)
 
 
 class DeviceSectionHeader(QWidget):
@@ -179,6 +256,7 @@ class MainWindow(QMainWindow):
             result_finished=self.bridge.transfer_result.emit,
             route_started=self.bridge.transport_changed.emit,
             trust_changed=self.bridge.trust_changed.emit,
+            receive_started=self.bridge.receive_started.emit,
         )
         self.network = NetworkManager(self.identity, self.store, callbacks)
         self.radio_peers: dict[str, dict] = {}
@@ -197,6 +275,10 @@ class MainWindow(QMainWindow):
         self.scan_pending = False
         self.discovery: Discovery | None = None
         self._closing = False
+        self.refresh_animation_index = 0
+        self.refresh_in_progress = False
+        self.refresh_animation_timer = QTimer(self)
+        self.refresh_animation_timer.setInterval(120)
 
         self._build_ui()
         self._connect_signals()
@@ -243,7 +325,8 @@ class MainWindow(QMainWindow):
 
     def _load_radio(self) -> None:
         radio = NativeRadio(self.identity.device_id, self.network.port,
-                            self.bridge.radio_event.emit, public_key=self.identity.public_b64)
+                            self.bridge.radio_event.emit, public_key=self.identity.public_b64,
+                            display_name=self.identity.display_name)
         if self._closing:
             radio.close()
         else:
@@ -267,35 +350,57 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(10)
 
+        header = QHBoxLayout()
+        heading = QVBoxLayout()
+        heading.setSpacing(2)
         title = QLabel("Local Secure Share")
-        title.setStyleSheet("font-size: 25px; font-weight: 650")
-        root.addWidget(title)
-        mode = "LAN + Wi-Fi Direct" if sys.platform == "win32" else "LAN only"
-        subtitle = QLabel(f"{self.identity.display_name} | {mode}")
-        subtitle.setStyleSheet("color: #666")
-        root.addWidget(subtitle)
+        title.setStyleSheet("font-size: 25px; font-weight: 700")
+        heading.addWidget(title)
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(4)
+        self.profile_name = QLabel(self.identity.display_name)
+        self.profile_name.setStyleSheet("color: #6b7280; font-size: 12px;")
+        profile_row.addWidget(self.profile_name)
+        self.edit_profile_button = QToolButton()
+        edit_icon = MaterialIcon("edit")
+        edit_icon.set_color(self.palette().color(QPalette.ButtonText))
+        self.edit_profile_button.setIcon(edit_icon)
+        self.edit_profile_button.setIconSize(QSize(16, 16))
+        self.edit_profile_button.setAutoRaise(True)
+        self.edit_profile_button.setToolTip("Edit this device's name")
+        self.edit_profile_button.setAccessibleName("Edit this device's name")
+        self.edit_profile_button.setFixedSize(22, 22)
+        profile_row.addWidget(self.edit_profile_button)
+        profile_row.addStretch()
+        heading.addLayout(profile_row)
+        header.addLayout(heading)
+        header.addStretch()
+        self.receive_status = QLabel()
+        self.receive_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        header.addWidget(self.receive_status)
+        root.addLayout(header)
+        self.update_receive_status("ready")
 
-        root.addWidget(QLabel("1. Drop files"))
         self.file_list = DropList()
         self.file_list.setToolTip("Drop regular files here; folders are not transferred")
         root.addWidget(self.file_list)
-        file_actions = QHBoxLayout()
-        self.add_button = QPushButton("Add files")
-        self.remove_button = QPushButton("Remove selected")
-        file_actions.addWidget(self.add_button)
-        file_actions.addWidget(self.remove_button)
-        file_actions.addStretch()
-        root.addLayout(file_actions)
-
         device_header = QHBoxLayout()
-        self.device_instruction = QLabel("2. Add files first, then select a device")
+        self.device_instruction = QLabel("Select device")
         device_header.addWidget(self.device_instruction)
-        self.refresh_button = QPushButton("Refresh")
-        device_header.addWidget(self.refresh_button)
         device_header.addStretch()
-        self.radio_status = QLabel("Wi-Fi Direct starting..." if sys.platform == "win32" else "LAN only")
+        self.radio_status = QLabel("Wi-Fi Direct starting..." if sys.platform == "win32" else "")
         self.radio_status.setStyleSheet("color: #666")
-        device_header.addWidget(self.radio_status)
+        if sys.platform == "win32":
+            device_header.addWidget(self.radio_status)
+        self.refresh_button = QToolButton()
+        self.refresh_base_icon = MaterialIcon("refresh")
+        self.refresh_base_icon.set_color(self.palette().color(QPalette.ButtonText))
+        self.refresh_button.setIcon(self.refresh_base_icon)
+        self.refresh_button.setIconSize(QSize(18, 18))
+        self.refresh_button.setFixedSize(30, 30)
+        self.refresh_button.setToolTip("Refresh nearby devices")
+        self.refresh_button.setAccessibleName("Refresh nearby devices")
+        device_header.addWidget(self.refresh_button)
         root.addLayout(device_header)
 
         self.devices = QListWidget()
@@ -312,7 +417,31 @@ class MainWindow(QMainWindow):
         self.transport_badge = QLabel()
         self.transport_badge.hide()
         progress_row.addWidget(self.transport_badge)
+        self.cancel_button = QPushButton("Cancel transfer")
+        self.cancel_button.hide()
+        progress_row.addWidget(self.cancel_button)
         root.addLayout(progress_row)
+
+        self.receive_details = QWidget()
+        details_layout = QVBoxLayout(self.receive_details)
+        details_layout.setContentsMargins(12, 8, 12, 8)
+        details_layout.setSpacing(3)
+        self.receive_file_label = QLabel()
+        self.receive_file_label.setStyleSheet("font-weight: 650;")
+        self.receive_summary_label = QLabel()
+        self.receive_summary_label.setStyleSheet("color: #6b7280; font-size: 11px;")
+        self.receive_rate_label = QLabel()
+        self.receive_rate_label.setStyleSheet("color: #6b7280; font-size: 11px;")
+        details_layout.addWidget(self.receive_file_label)
+        details_layout.addWidget(self.receive_summary_label)
+        details_layout.addWidget(self.receive_rate_label)
+        self.receive_details.setStyleSheet(
+            "QWidget { border: 1px solid rgba(128, 128, 128, 70); "
+            "border-radius: 8px; background: rgba(128, 128, 128, 18); }"
+            "QLabel { border: none; background: transparent; }"
+        )
+        self.receive_details.hide()
+        root.addWidget(self.receive_details)
         self.status = QLabel("No internet or cloud service is used.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -334,15 +463,18 @@ class MainWindow(QMainWindow):
         self.bridge.transfer_finished.connect(self.finish_transfer)
         self.bridge.transfer_result.connect(self.finish_transfer_result)
         self.bridge.receive_finished.connect(self.finish_receive)
+        self.bridge.receive_started.connect(self.begin_receive)
         self.bridge.radio_event.connect(self.handle_radio_event)
         self.bridge.discovery_changed.connect(self.handle_discovery)
         self.bridge.transport_changed.connect(self.set_transfer_transport)
         self.bridge.trust_changed.connect(self.refresh_nearby_devices)
         self.bridge.radio_loaded.connect(self._finish_radio_load)
         self.file_list.files_dropped.connect(self.add_paths)
-        self.add_button.clicked.connect(self.pick_files)
-        self.remove_button.clicked.connect(self.remove_files)
+        self.file_list.select_requested.connect(self.pick_files)
+        self.edit_profile_button.clicked.connect(self.edit_profile)
         self.refresh_button.clicked.connect(self.refresh_devices)
+        self.refresh_animation_timer.timeout.connect(self.advance_refresh_animation)
+        self.cancel_button.clicked.connect(self.cancel_transfer)
         self.devices.customContextMenuRequested.connect(self.show_device_menu)
         self.devices.itemClicked.connect(self.device_clicked)
 
@@ -391,8 +523,15 @@ class MainWindow(QMainWindow):
         for path in paths:
             if path.is_file() and str(path.resolve()) not in existing:
                 self.paths.append(path)
-                self.file_list.addItem(f"{path.name}  ({path.stat().st_size:,} bytes)")
+                item = QListWidgetItem()
+                item.setData(Qt.UserRole, str(path.resolve()))
+                row = FileRow(path)
+                row.remove_requested.connect(self.remove_path)
+                item.setSizeHint(row.sizeHint())
+                self.file_list.addItem(item)
+                self.file_list.setItemWidget(item, row)
                 existing.add(str(path.resolve()))
+        self.file_list.sync_empty_state()
         if self.paths:
             self.status.setText("Files ready. Click a nearby device to send.")
         self.refresh_nearby_devices()
@@ -401,13 +540,50 @@ class MainWindow(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Choose files")
         self.add_paths([Path(value) for value in files])
 
-    def remove_files(self) -> None:
+    @Slot()
+    def edit_profile(self) -> None:
         if self.workflow_active or self.receiving:
             return
-        rows = sorted((self.file_list.row(item) for item in self.file_list.selectedItems()), reverse=True)
-        for row in rows:
-            self.file_list.takeItem(row)
-            self.paths.pop(row)
+        name, accepted = QInputDialog.getText(
+            self, "Edit your profile", "Device name:", text=self.identity.display_name
+        )
+        if not accepted:
+            return
+        try:
+            identity = update_display_name(self.identity, name)
+        except (OSError, ValueError) as exc:
+            self.status.setText(str(exc))
+            return
+        self.identity = identity
+        self.network.identity = identity
+        self.profile_name.setText(identity.display_name)
+        if self.discovery:
+            try:
+                self.discovery.update_display_name(identity.display_name)
+            except Exception as exc:
+                logger.exception("Could not update LAN profile advertisement")
+                self.status.setText(f"Name saved, but LAN advertisement could not update: {exc}")
+                return
+        if self.radio and hasattr(self.radio, "update_display_name"):
+            try:
+                self.radio.update_display_name(identity.display_name)
+            except Exception as exc:
+                logger.exception("Could not update Wi-Fi Direct profile advertisement")
+                self.status.setText(f"Name saved, but Wi-Fi Direct advertisement could not update: {exc}")
+                return
+        self.status.setText("Your device name has been updated.")
+
+    @Slot(str)
+    def remove_path(self, path_key: str) -> None:
+        if self.workflow_active or self.receiving:
+            return
+        row = next((index for index in range(self.file_list.count())
+                    if self.file_list.item(index).data(Qt.UserRole) == path_key), -1)
+        if row < 0:
+            return
+        self.file_list.takeItem(row)
+        self.paths.pop(row)
+        self.file_list.sync_empty_state()
         self.refresh_nearby_devices()
 
     def show_device_menu(self, position) -> None:
@@ -415,11 +591,29 @@ class MainWindow(QMainWindow):
         if not item or not item.data(DEVICE_TRUSTED_ROLE):
             return
         menu = QMenu(self)
+        rename = menu.addAction("Rename device")
         revoke = menu.addAction("Revoke trust")
-        if menu.exec(self.devices.mapToGlobal(position)) is not revoke:
+        selected = menu.exec(self.devices.mapToGlobal(position))
+        if selected not in (rename, revoke):
             return
         device_id = item.data(DEVICE_ID_ROLE)
         if not device_id:
+            return
+        if selected is rename:
+            peer = self.store.peer(str(device_id))
+            if not peer:
+                return
+            alias, accepted = QInputDialog.getText(
+                self, "Rename trusted device", "Device name:", text=peer["name"]
+            )
+            if not accepted:
+                return
+            if len(alias.strip()) > 80:
+                self.status.setText("Device names must be 80 characters or fewer.")
+                return
+            self.store.rename_peer(str(device_id), alias)
+            self.status.setText("Trusted device name updated.")
+            self.refresh_nearby_devices()
             return
         answer = QMessageBox.question(
             self, "Revoke trust",
@@ -435,6 +629,7 @@ class MainWindow(QMainWindow):
     def refresh_devices(self) -> None:
         if self.workflow_active or self.receiving:
             return
+        self.start_refresh_animation()
         self.status.setText("Refreshing nearby devices...")
         if self.discovery:
             self.discovery.refresh()
@@ -442,14 +637,70 @@ class MainWindow(QMainWindow):
         if self.radio and self.radio_ready and not self.scan_pending:
             self.scan_radios()
         else:
+            QTimer.singleShot(800, self.finish_refresh_animation)
+
+    def start_refresh_animation(self) -> None:
+        if self.refresh_in_progress:
+            return
+        self.refresh_in_progress = True
+        self.refresh_animation_index = 0
+        self.refresh_button.setEnabled(False)
+        self.advance_refresh_animation()
+        self.refresh_animation_timer.start()
+        QTimer.singleShot(30000, self.finish_refresh_animation)
+
+    @Slot()
+    def advance_refresh_animation(self) -> None:
+        self.refresh_animation_index = (self.refresh_animation_index + 1) % 12
+        pixmap = self.refresh_base_icon.pixmap(18, 18)
+        transform = QTransform().rotate(self.refresh_animation_index * 30)
+        self.refresh_button.setIcon(QIcon(pixmap.transformed(transform, Qt.SmoothTransformation)))
+
+    @Slot()
+    def finish_refresh_animation(self) -> None:
+        if not self.refresh_in_progress:
+            return
+        self.refresh_in_progress = False
+        self.refresh_animation_timer.stop()
+        self.refresh_button.setIcon(self.refresh_base_icon)
+        self.refresh_button.setEnabled(not self.workflow_active and not self.receiving)
+        if not self.workflow_active and not self.receiving:
             self.status.setText("Nearby device list refreshed.")
 
     def set_busy(self, busy: bool) -> None:
         self.devices.setEnabled(not busy)
-        self.add_button.setEnabled(not busy)
-        self.remove_button.setEnabled(not busy)
         self.file_list.setEnabled(not busy)
-        self.refresh_button.setEnabled(not busy)
+        self.edit_profile_button.setEnabled(not busy)
+        self.refresh_button.setEnabled(not busy and not self.refresh_in_progress)
+        self.cancel_button.setVisible(busy)
+        self.cancel_button.setEnabled(busy)
+        self.update_receive_status("busy" if busy else "ready")
+
+    @Slot()
+    def cancel_transfer(self) -> None:
+        if not self.workflow_active and not self.receiving:
+            return
+        self.cancel_button.setEnabled(False)
+        self.status.setText("Canceling transfer…")
+        network_active = self.network.cancel_active_transfer()
+        if not network_active:
+            self.reset_workflow()
+
+    def update_receive_status(self, state: str) -> None:
+        if state == "ready":
+            color, text = "#22c55e", "Ready to receive"
+            tooltip = "This device is online and ready to accept an incoming file offer."
+        elif state == "busy":
+            color, text = "#f59e0b", "Transfer in progress"
+            tooltip = "This device is busy and cannot start another transfer right now."
+        else:
+            color, text = "#9ca3af", "Receive unavailable"
+            tooltip = "This device is not currently available for incoming transfers."
+        self.receive_status.setText(f"●  {text}")
+        self.receive_status.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: 650; padding: 6px 0;"
+        )
+        self.receive_status.setToolTip(tooltip)
 
     @Slot(QListWidgetItem)
     def device_clicked(self, item: QListWidgetItem) -> None:
@@ -550,9 +801,11 @@ class MainWindow(QMainWindow):
             self.scan_pending = False
             self.radio_status.setText(f"{len(self.radio_peers)} nearby")
             self.refresh_nearby_devices()
+            self.finish_refresh_animation()
         elif kind == "wifi_direct_scan_error":
             self.scan_pending = False
             self.radio_status.setText("Scan failed; retrying")
+            self.finish_refresh_animation()
             if not self.workflow_active and not self.receiving:
                 self.status.setText(f"Discovery failed: {event.get('message')}. Retrying automatically.")
         elif kind == "wifi_direct_connection_request":
@@ -601,10 +854,7 @@ class MainWindow(QMainWindow):
     def refresh_nearby_devices(self) -> None:
         self.devices.clear()
         files_ready = bool(self.paths)
-        self.device_instruction.setText(
-            "2. Select a device to send" if files_ready
-            else "2. Add files first, then select a device"
-        )
+        self.device_instruction.setText("Select device")
         self.device_instruction.setStyleSheet(
             "font-weight: 650; color: #2563eb" if files_ready else "color: #666"
         )
@@ -630,7 +880,10 @@ class MainWindow(QMainWindow):
         trusted_rows = []
         new_rows = []
         for device_id, peer in online.items():
-            row = {**peer, "online": True, "trusted": device_id in trusted_by_id}
+            trusted = trusted_by_id.get(device_id)
+            preferred_name = (trusted.get("alias") if trusted else None) or peer["name"]
+            row = {**peer, "name": preferred_name,
+                   "online": True, "trusted": trusted is not None}
             (trusted_rows if row["trusted"] else new_rows).append(row)
         for device_id, peer in trusted_by_id.items():
             if device_id not in online:
@@ -681,7 +934,7 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
             item.setToolTip("Add one or more files before selecting a device")
         widget = DeviceRow(row["name"], row["detail"], "Online" if online else "Offline",
-                           muted=not online or not files_ready)
+                           muted=not online)
         item.setSizeHint(widget.sizeHint())
         self.devices.addItem(item)
         self.devices.setItemWidget(item, widget)
@@ -755,18 +1008,10 @@ class MainWindow(QMainWindow):
         self.receive_offer_active = True
         self.set_busy(True)
         self.status.setText(f"Awaiting your approval for files from {peer['name']}.")
-        def readable_size(size: int) -> str:
-            value = float(size)
-            for unit in ("B", "KB", "MB", "GB", "TB"):
-                if value < 1024 or unit == "TB":
-                    return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
-                value /= 1024
-            return f"{size:,} B"
-
         descriptions = "\n".join(
-            f"• {item['name']} — {readable_size(int(item['size']))}" for item in files
+            f"• {item['name']} — {_readable_size(int(item['size']))}" for item in files
         )
-        total = readable_size(sum(int(item["size"]) for item in files))
+        total = _readable_size(sum(int(item["size"]) for item in files))
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Incoming files")
         dialog.setIcon(QMessageBox.Question)
@@ -791,10 +1036,37 @@ class MainWindow(QMainWindow):
             self.status.setText("Transfer declined.")
         request.event.set()
 
-    @Slot(str, int)
-    def update_progress(self, _transfer: str, value: int) -> None:
+    @Slot(object)
+    def update_progress(self, progress) -> None:
         self.progress.setRange(0, 100)
-        self.progress.setValue(value)
+        self.progress.setValue(progress.percent)
+        if progress.direction != "receive":
+            return
+        self.receive_file_label.setText(
+            f"Receiving {progress.current_file}  ·  File {progress.file_index} of {progress.total_files}"
+        )
+        self.receive_summary_label.setText(
+            f"{progress.files_completed} of {progress.total_files} files complete  ·  "
+            f"{_readable_size(progress.bytes_transferred)} of {_readable_size(progress.total_bytes)}  ·  "
+            f"{progress.percent}%"
+        )
+        speed = (_readable_size(progress.bytes_per_second) + "/s"
+                 if progress.bytes_per_second > 0 else "Calculating speed…")
+        self.receive_rate_label.setText(f"{speed}  ·  {_readable_duration(progress.eta_seconds)}")
+        self.receive_details.show()
+
+    def reset_transfer_details(self) -> None:
+        self.receive_file_label.clear()
+        self.receive_summary_label.clear()
+        self.receive_rate_label.clear()
+        self.receive_details.hide()
+
+    @Slot()
+    def begin_receive(self) -> None:
+        if self.workflow_active:
+            return
+        self.receiving = True
+        self.set_busy(True)
 
     @Slot()
     def finish_receive(self) -> None:
@@ -812,6 +1084,10 @@ class MainWindow(QMainWindow):
     def finish_transfer_result(self, result) -> None:
         if result.succeeded:
             self.finish_transfer(True)
+            return
+        if getattr(result, "cancelled", False):
+            self.status.setText("Transfer canceled.")
+            self.finish_transfer(False)
             return
         if (getattr(result, "may_fallback", False) and self.selected_endpoint
                 and self.selected_endpoint.get("route") == "lan"):
@@ -857,6 +1133,8 @@ class MainWindow(QMainWindow):
         self.send_started = False
         self.set_transfer_transport(None)
         self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.reset_transfer_details()
         self.set_busy(False)
         if reset_link:
             self.network.clear_links()
@@ -871,6 +1149,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
+        self.update_receive_status("unavailable")
+        self.refresh_animation_timer.stop()
         if self.scan_timer:
             self.scan_timer.stop()
         self.expiry_timer.stop()

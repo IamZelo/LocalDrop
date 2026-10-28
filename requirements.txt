@@ -1,4 +1,5 @@
 PySide6>=6.8,<7
+qt-material-icons>=0.5,<1
 qasync>=0.28,<1
 cryptography>=44,<47
 keyring>=25,<26
