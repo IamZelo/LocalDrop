@@ -165,13 +165,13 @@ class PythonWinRTRadio:
         try:
             self.loop = asyncio.get_event_loop()
         except RuntimeError:
-            self.start_error = "The Qt asyncio event loop has not been installed"
-            logger.exception("Python WinRT startup requires the Qt asyncio event loop")
+            self.start_error = "The radio worker asyncio event loop has not been installed"
+            logger.exception("Python WinRT startup requires a worker asyncio event loop")
             return False
         if self.loop.is_closed():
             self.start_error = "The Qt asyncio event loop is closed"
             return False
-        logger.info("Starting in-process Python WinRT radio backend on the UI event loop")
+        logger.info("Starting in-process Python WinRT radio backend on its worker event loop")
         self.main_task = self.loop.create_task(self._run_main(), name="python-winrt-radio")
         return True
 
